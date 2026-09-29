@@ -24,10 +24,14 @@ signal kill_feed(killer_id: int, victim_id: int, weapon_name: String, headshot: 
 
 enum Mode { OFFLINE, HOST, DEDICATED, CLIENT }
 
-const PROTOCOL_VERSION := 5
+const PROTOCOL_VERSION := 6
 const DEFAULT_PORT := 7777
 const DEFAULT_MAX_PLAYERS := 16
 const DEFAULT_MAP := "res://scenes/levels/test_map.tscn"
+## Offline game mode (Practice, or a mode against bots) and the bots to add
+## when the first level of a session loads (main menu / --bots).
+var offline_mode: int = GameConfig.Mode.PRACTICE
+var start_bots: int = 0
 const MAIN_MENU := "res://scenes/main/main_menu.tscn"
 const CONNECT_TIMEOUT := 10.0
 
@@ -112,11 +116,14 @@ func server_time() -> float:
 	return _local_time() + _clock_offset
 
 
-func start_offline(map_path: String = DEFAULT_MAP) -> void:
+## Offline: Practice on your own, or `game_mode` against `bots` training bots.
+func start_offline(map_path: String = DEFAULT_MAP, bots: int = 0, game_mode: int = -1) -> void:
 	_reset_peer()
 	mode = Mode.OFFLINE
 	current_map = map_path
-	Match.configure(GameConfig.Mode.PRACTICE)
+	offline_mode = game_mode if bots > 0 and game_mode >= 0 else GameConfig.Mode.PRACTICE
+	start_bots = bots
+	Match.configure(offline_mode)
 	get_tree().change_scene_to_file(map_path)
 
 
@@ -255,13 +262,17 @@ func on_level_loaded(level: Level) -> void:
 	_level = level
 	if multiplayer.is_server():
 		if mode == Mode.OFFLINE:
-			Match.configure(GameConfig.Mode.PRACTICE)
+			Match.configure(offline_mode)
 		Match.start_match()
 		if mode != Mode.DEDICATED:
 			if not roster.has(1):
 				_add_local_entry()
 			_ready_peers[1] = true
 			_server_spawn(1)
+		Match.bots.on_level_loaded(level)
+		if start_bots > 0:
+			Match.bots.set_count(start_bots)
+			start_bots = 0
 	else:
 		_level_ready.rpc_id(1)
 
@@ -321,7 +332,7 @@ func _on_connected_to_server() -> void:
 	_connect_timer = -1.0
 	print("[net] Connected as peer %d" % multiplayer.get_unique_id())
 	_register_player.rpc_id(1, local_name, PROTOCOL_VERSION, SettingsManager.preferred_primary,
-		VoiceCodec.opus_available())
+		VoiceCodec.opus_available(), CharacterLook.pack(SettingsManager.character))
 
 
 func _on_connection_failed() -> void:
@@ -344,7 +355,7 @@ func _fail(reason: String) -> void:
 # -----------------------------------------------------------------------------
 
 @rpc("any_peer", "call_remote", "reliable")
-func _register_player(player_name: String, protocol: int, primary: String, opus: bool) -> void:
+func _register_player(player_name: String, protocol: int, primary: String, opus: bool, look: Array = []) -> void:
 	if not multiplayer.is_server():
 		return
 	var id := multiplayer.get_remote_sender_id()
@@ -352,6 +363,7 @@ func _register_player(player_name: String, protocol: int, primary: String, opus:
 		_kicked.rpc_id(id, "Version mismatch (server %d, client %d)." % [PROTOCOL_VERSION, protocol])
 		return
 	roster[id] = _new_entry(_sanitize_name(player_name, id), primary, opus)
+	roster[id].look = CharacterLook.pack(CharacterLook.unpack(look))
 	roster[id].team = Match.assign_team(id)
 	print("[net] %s (%d) joined" % [roster[id].name, id])
 	_client_load_map.rpc_id(id, current_map)
@@ -374,6 +386,9 @@ func _level_ready() -> void:
 		_spawn_player.rpc_id(id, p.peer_id, p.player_name, p.global_transform, p.primary_id, p.current_slot)
 	for h: Health in get_tree().get_nodes_in_group(Health.NET_GROUP):
 		h.send_state_to(id)
+	# Doors (open / broken pieces) and windows (cracked / shattered).
+	for n in get_tree().get_nodes_in_group(Door.NET_GROUP):
+		n.send_state_to(id)
 	_server_spawn(id)
 
 
@@ -459,6 +474,7 @@ func _server_spawn(peer_id: int) -> void:
 
 func _add_local_entry() -> void:
 	roster[1] = _new_entry(local_name, SettingsManager.preferred_primary, VoiceCodec.opus_available())
+	roster[1].look = CharacterLook.pack(SettingsManager.character)
 	roster[1].team = Match.assign_team(1)
 
 
@@ -482,7 +498,13 @@ func _new_entry(player_name: String, primary: String = GameConfig.DEFAULT_PRIMAR
 	return {
 		"name": player_name, "kills": 0, "deaths": 0, "ping": 0,
 		"team": GameConfig.TEAM_NONE, "primary": primary, "opus": opus, "money": Economy.START_MONEY,
+		"look": CharacterLook.pack(CharacterLook.default_look()),
 	}
+
+
+## A player's look (CharacterLook) from the roster.
+func look_of(peer_id: int) -> Dictionary:
+	return CharacterLook.unpack(roster.get(peer_id, {}).get("look", []))
 
 
 func _sanitize_name(raw: String, id: int) -> String:
@@ -494,7 +516,7 @@ func _local_time() -> float:
 	return Time.get_ticks_usec() / 1_000_000.0
 
 
-## `godot --headless -- --server [--port 7777] [--max-players 16] [--map warehouse] [--mode tdm]`
+## `godot --headless -- --server [--port 7777] [--max-players 16] [--map docks] [--mode tdm]`
 ## `godot -- --connect 1.2.3.4:7777 [--name Bob]`
 func _start_dedicated_from_args() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -510,11 +532,11 @@ func _start_dedicated_from_args() -> void:
 			local_name = args[name_i + 1]
 			SettingsManager.player_name = local_name
 		var target := args[connect_i + 1]
-		var port := DEFAULT_PORT
+		var join_port := DEFAULT_PORT
 		if target.count(":") == 1:
-			port = target.get_slice(":", 1).to_int()
+			join_port = target.get_slice(":", 1).to_int()
 			target = target.get_slice(":", 0)
-		join(target, port)
+		join(target, join_port)
 		return
 	# The "Linux Server" export has the dedicated_server feature: always a server.
 	if not "--server" in args and not OS.has_feature("dedicated_server"):
@@ -535,6 +557,8 @@ func _start_dedicated_from_args() -> void:
 			"--max-players": max_players = value.to_int()
 			"--map": map_path = GameConfig.map_path(value)
 			"--mode": game_mode = GameConfig.MODE_IDS.get(value.to_lower(), GameConfig.Mode.FFA)
+			"--bots": start_bots = clampi(value.to_int(), 0, BotManager.MAX_BOTS)
+			"--bot-skill": Match.bots.difficulty = clampi(value.to_int(), 0, 2)
 	if host(port, max_players, true, map_path, game_mode) != OK:
 		push_error(last_error)
 		get_tree().quit(1)

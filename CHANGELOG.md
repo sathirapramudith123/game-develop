@@ -2,6 +2,101 @@
 
 ## Unreleased — 5 new maps, CS-style HUD, hands and reload animations
 
+**Weapon animations:** one system, a profile per gun. Idle sway, walk / run
+bob, the gun lagging behind the mouse, an equip raise, per-gun fire kick and
+recovery, reload tilt and hand speed, reload sounds on cue. The sniper's
+right hand works the bolt after every shot, the shotgun racks its pump. The
+rifle / SMG / pistol reloads end on the charging handle / slide. Each gun
+inspects its own way (SMG magazine check, a shotgun shell held up, the
+sniper raised to the scope, the LMG's cover lifted). First-person gloves
+and sleeves follow your character's outfit.
+
+**Shotgun loads shell by shell:** firing stops the reload with the shells
+already in (the server counts them by time).
+
+**New gun: K-100 LMG** ($5200): 100-round belt box, 720 RPM, 5 s reload
+(cover up, box swap, cover down), slower to walk with. In the buy menu, the
+loadout list and bots' shopping.
+
+**Win / lose sounds:** a brass fanfare with timpani and cymbals when you win
+the match, a slow falling defeat theme when you lose, a draw sting, and
+fuller round win / lose stings. Fixed: when a match ended on time, the
+winners heard the losing sound.
+
+**Character creator:** main menu → Character. Male or female body, 15 faces
+(skin, hair, beards), eye colour, mouth, ears and a voice (your grunts and
+death cry), and a clothing kit: 7 outfits (Tactical, Military, Urban,
+Desert, Winter, Stealth, Casual) that dress headwear, torso armour,
+backpack, gloves, pants and boots — each changeable on its own, with
+woodland / desert / urban / winter / multicam camouflage. A turning 3D
+preview, Random and Reset. Everyone sees your look in game; bots get random
+ones. Team colours stay on the shoulders, armbands, chest patch and helmet
+band. Network protocol 6 (clients and servers must both update).
+
+**Subway rebuilt** after the concept art: Riverside station, a 3-lane
+bomb map. T spawn east (Exit stairs), CT spawn west (ticket hall). A Long
+(upper), Mid (the central island) and B Long (lower) are platforms with
+metro trains parked on the tracks between them — walk through the open
+doors or drop into the track bed and jump out. A and B are platforms
+beside a terminating train; tunnel mouths with red signals at every track
+end.
+
+**Training bots:** choose how many bots (0–15) and how good (Easy /
+Normal / Hard) in the main menu. Play Offline then plays FFA, TDM or Bomb
+Defusal against them (0 bots = Practice as before); hosting fills your
+server with them, and the host can add or remove bots from the Esc menu
+(dedicated server: `--bots N --bot-skill 0-2`). Bots walk the map on a
+navigation mesh, only see you with a clear line of sight (not through
+walls or smoke), react, aim and spray in bursts while strafing, turn when
+shot, open doors, reload, and in Bomb Defusal buy guns and armour, plant,
+hold sites and defuse. Teammate bots show their name and health.
+
+**Fixed:** more than five kills within five seconds froze the game (the kill
+feed trimmed old lines with a deferred free and never finished).
+
+**Animations:** players no longer vanish when killed — they stagger, their
+knees give and they fall (backwards, forwards, twisting to the side or
+crumpling), with a little bounce, the gun clattering out of their hands; the
+body stays for 8 s. Your own view drops to the floor and rolls when you
+die. Climbing shows both gloved hands gripping the ledge as you pull up.
+**I** inspects your weapon (the gun turns to show each side, the knife
+flips in the hand); any action cancels it.
+
+**Names over players:** bigger name tags. Teammates always show their name
+— through walls — with a health bar under it; an enemy's name appears when
+your crosshair is on them or they're within 6 m (never through walls or
+smoke). Far-away tags fade a little.
+
+**Bomb Defusal overtime:** regulation is 8 rounds (first to 5); if it ends
+4–4 the match goes to overtime — halves of 3 rounds with sides swapping and
+$10,000 each — and the first team to win 4 overtime rounds takes it. Level
+again, another overtime. The HUD shows "OVERTIME 1 — first to 8".
+
+**Doors and glass:** doorways in houses and offices have real doors now
+(19 across Docks, Oasis, Factory and Office). Press F looking at one to
+open it — it swings away from you — or close it. Doors are made of wooden
+pieces: bullets splinter the piece they hit and shoot it out, so the door
+breaks where you shoot it and you can see and fire through the holes; HE
+grenades blow pieces out too. House windows and the office glass walls are
+glass panes: the first shot cracks the glass, the second shatters it into
+falling shards (a knife, sniper round, HE or a flash nearby breaks it at
+once), and bullets fly on through. Everything is server-side and synced,
+including for players who join later.
+
+**Docks rebuilt** from concept art as a 3-lane bomb map at sunset. Mid
+runs through the Port Authority warehouse; A is the container yard off
+its north door under a gantry crane (the red container with the A), and T
+reach it along A Long — a raised loading platform with a rail track; B is
+on the quay beside the moored ship and two ship-to-shore cranes (the blue
+container with the B), reached along B Long, the quay. T spawn is the gate
+road under a walkway, CT spawn a harbour office with a pickup. A fence
+along the quay edge keeps everyone out of the water.
+
+**Map line-up:** Warehouse, Courtyard and Rooftops are gone; **Kasbah is
+now called Oasis** (a saved "kasbah" choice or `--map kasbah` still opens
+it). Rotation: Test Range → Docks → Bunker → Oasis → Factory → Office →
+Subway → Train Yard. The full hardware test now plays Office and Docks.
+
 **Climbing:** press Space facing a crate, car, sandbag wall, low wall or
 other climbable prop up to 2.2 m high and you pull yourself up on top (or
 keep Space held after a jump to grab the ledge). Only those props can be

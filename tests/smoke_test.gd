@@ -3,6 +3,7 @@ extends Node
 ## Run:  godot --headless --path . res://tests/smoke_test.tscn
 ## Exits with code 0 when every check passes, 1 otherwise.
 
+@warning_ignore_start("static_called_on_instance") # static helpers on autoloads (NetworkManager, SettingsManager…)
 const TEST_MAP := "res://scenes/levels/test_map.tscn"
 
 var _failures := 0
@@ -40,6 +41,7 @@ func _run() -> void:
 	await _test_weapon_switching()
 	await _test_new_controls()
 	await _test_shotgun_and_sniper()
+	await _test_weapon_animations()
 	await _test_loadout_on_respawn()
 	await _test_grenades()
 	await _test_grenade_wheel_and_arc()
@@ -51,6 +53,9 @@ func _run() -> void:
 	await _test_settings_menu()
 	await _test_performance()
 	await _test_maps()
+	await _test_doors_and_glass()
+	await _test_bots()
+	await _test_characters()
 	_test_hardware_report()
 
 	print("\n%s — %d failure(s)" % ["PASSED" if _failures == 0 else "FAILED", _failures])
@@ -120,6 +125,8 @@ func _test_climbing() -> void:
 	_press_action(&"jump")
 	await _frames(3)
 	_check(_player.is_climbing, "Jump at the crate starts climbing")
+	_check(is_instance_valid(_player._climb_hands) and _player._climb_hands.get_child_count() >= 4,
+		"first-person hands grab the ledge while climbing")
 	await _frames(70)
 	_check(not _player.is_climbing and _player.global_position.y > 1.7 and _player.global_position.z < 2.6,
 		"climbed up on top of the crate (%s)" % _player.global_position.snappedf(0.01))
@@ -341,7 +348,7 @@ func _test_voice_codec() -> void:
 	for i in n:
 		tone[i] = 0.5 * sin(TAU * 440.0 * i / 16000.0)
 	var packet := VoiceCodec.encode(tone)
-	_check(packet.size() == 3 + n / 2, "ADPCM packet is 4 bits/sample (%d bytes)" % packet.size())
+	_check(packet.size() == 3 + (n >> 1), "ADPCM packet is 4 bits/sample (%d bytes)" % packet.size())
 	var decoded := VoiceCodec.decode(packet, n)
 	var sig := 0.0
 	var err := 0.0
@@ -648,6 +655,15 @@ func _test_new_controls() -> void:
 	_check(not t.is_holding() and not _player.current_weapon.holstered and t.counts[Throwables.Kind.FLASH] == 2,
 		"1 puts the grenade away, nothing thrown")
 
+	# Inspect (I): the gun turns to show its sides; firing stops it.
+	var gun := _player.current_weapon
+	_press_action(&"inspect")
+	await _frames(40)
+	_check(gun.is_inspecting() and absf(gun.rotation.y) > 0.2, "I inspects the weapon (turned %.2f)" % gun.rotation.y)
+	gun.try_fire()
+	_check(not gun.is_inspecting(), "firing cancels the inspect")
+	await _frames(20)
+
 	# Big map (M).
 	_tap(&"map")
 	await _frames(3)
@@ -732,6 +748,148 @@ func _test_shotgun_and_sniper() -> void:
 	await _frames(5)
 	_check(target.health.is_dead, "one sniper body shot kills")
 	_player.apply_loadout("rifle")
+
+
+## The animation system (WeaponAnim profiles): equip raise, idle sway, walk
+## bob, bolt / pump after a shot, reloads (shell by shell, the LMG's cover),
+## per-weapon inspects, the LMG, arms in the outfit's colours.
+func _test_weapon_animations() -> void:
+	var missing := GameConfig.WEAPONS.keys().filter(func(id: String) -> bool: return not WeaponAnim.PROFILES.has(id))
+	_check(missing.is_empty(), "every weapon has an animation profile %s" % str(missing))
+	_reset_player(Vector3(0, 0.1, 6))
+	_player.apply_loadout("rifle")
+	await _frames(40)
+	_player.apply_loadout("smg")
+	await _frames(2)
+	var w := _player.current_weapon
+	_check(w.position.y < w._hip_position.y - 0.04, "equip: the gun comes up from low (%.3f)" % (w.position.y - w._hip_position.y))
+	await _frames(50)
+	_check(absf(w.position.y - w._hip_position.y) < 0.02, "equip: then sits in the hands")
+	var still := w.position
+	await _frames(45)
+	_check(w.position.distance_to(still) > 0.0003 and w.position.distance_to(still) < 0.02, "idle: the gun sways a little (breathing)")
+	var xs: Array[float] = []
+	Input.action_press(&"move_forward")
+	for i in 60:
+		await _frames(1)
+		xs.append(w.position.x)
+	Input.action_release(&"move_forward")
+	_check(xs.max() - xs.min() > 0.005, "walking: the gun bobs with the steps (%.3f)" % (xs.max() - xs.min()))
+
+	# Sniper: the right hand works the bolt after a shot; shotgun: the pump.
+	_reset_player(Vector3(0, 0.1, 6))
+	_player.apply_loadout("sniper")
+	await _frames(50)
+	w = _player.current_weapon
+	var arm_r := w.get_node(^"ArmR") as Node3D
+	w._cooldown = 0.0 # the cooldown of its last shot waited while it was put away
+	_check(w.try_fire(), "sniper fires")
+	var reach := 0.0
+	for i in 40:
+		await _frames(1)
+		reach = maxf(reach, arm_r.position.length())
+	_check(reach > 0.08, "sniper: the right hand leaves the grip to work the bolt (%.2f m)" % reach)
+	_player.apply_loadout("shotgun")
+	await _frames(50)
+	w = _player.current_weapon
+	var arm_l := w.get_node(^"ArmL") as Node3D
+	w._cooldown = 0.0
+	w.try_fire()
+	var rack := 0.0
+	for i in 40:
+		await _frames(1)
+		rack = maxf(rack, arm_l.position.z)
+	_check(rack > 0.03, "shotgun: the left hand racks the pump after a shot (%.2f)" % rack)
+
+	# Shotgun: shell by shell; firing stops the reload with what is in.
+	await _frames(30)
+	w.ammo_in_magazine = 2
+	w.ammo_reserve = 20
+	w.reload()
+	var full_time := w.data.reload_start + 4 * w.data.shell_time + w.data.reload_end
+	_check(is_equal_approx(w._reload_total, full_time), "shotgun: reload length grows with the shells missing (%.2f s)" % w._reload_total)
+	await _frames(int((w.data.reload_start + w.data.shell_time * 1.5) * 60.0))
+	_check(w.is_reloading and w.ammo_in_magazine == 3 and w.ammo_reserve == 19, "shotgun: one shell goes in at a time (%d)" % w.ammo_in_magazine)
+	await _frames(int(w.data.shell_time * 60.0))
+	var loaded := w.ammo_in_magazine
+	_check(w.try_fire() and not w.is_reloading and w.ammo_in_magazine == loaded - 1,
+		"shotgun: firing stops the reload (%d in, fired one)" % loaded)
+	await _frames(60)
+	w.ammo_in_magazine = 5
+	w.reload()
+	await _frames(int((w._reload_total + 0.2) * 60.0))
+	_check(not w.is_reloading and w.ammo_in_magazine == 6, "shotgun: a full reload tops it up")
+
+	# LMG: in the loadout, 100 rounds, slower to walk with, the cover lifts to reload.
+	_player.apply_loadout("lmg")
+	await _frames(70)
+	w = _player.current_weapon
+	_check(w.data.weapon_id == "lmg" and w.ammo_in_magazine == 100 and w.data.move_speed_multiplier < 1.0,
+		"LMG: in the loadout, a 100-round box, heavier to carry")
+	_check(Economy.ITEMS.has("lmg") and "lmg" in GameConfig.PRIMARY_WEAPONS, "LMG: in the buy menu and the loadout list")
+	w.ammo_in_magazine = 40
+	w.reload()
+	var cover := w.get_node(^"Cover") as Node3D
+	var lifted := 0.0
+	var mag_low := 0.0
+	for i in int(w.data.reload_time * 60.0) + 20:
+		await _frames(1)
+		lifted = minf(lifted, cover.rotation.x)
+		mag_low = minf(mag_low, (w.get_node(^"Magazine") as Node3D).position.y)
+	_check(lifted < -0.9 and mag_low < -0.2 and w.ammo_in_magazine == 100,
+		"LMG reload: cover up (%.2f), box out (%.2f), belt in, cover shut" % [lifted, mag_low])
+	_check(absf(cover.rotation.x) < 0.1, "LMG: the cover is shut again")
+
+	# Inspects: SMG checks its magazine, the shotgun shows a shell, the LMG lifts its cover.
+	_player.apply_loadout("smg")
+	await _frames(40)
+	w = _player.current_weapon
+	w.start_inspect()
+	var mag_drop := 0.0
+	for i in 100:
+		await _frames(1)
+		mag_drop = minf(mag_drop, (w.get_node(^"Magazine") as Node3D).position.y)
+	_check(mag_drop < -0.03, "inspect (SMG): the magazine is checked (%.2f)" % mag_drop)
+	_player.apply_loadout("shotgun")
+	await _frames(40)
+	w = _player.current_weapon
+	w.start_inspect()
+	var shell_seen := false
+	for i in 80:
+		await _frames(1)
+		shell_seen = shell_seen or (w.get_node(^"Magazine") as Node3D).visible
+	_check(shell_seen, "inspect (shotgun): a shell is held up to look at")
+	_player.apply_loadout("lmg")
+	await _frames(70)
+	w = _player.current_weapon
+	w.start_inspect()
+	lifted = 0.0
+	for i in 90:
+		await _frames(1)
+		lifted = minf(lifted, (w.get_node(^"Cover") as Node3D).rotation.x)
+	_check(lifted < -0.8, "inspect (LMG): the cover is lifted to show the belt")
+
+	# First-person arms wear the outfit.
+	var saved: Array = NetworkManager.roster[1].look
+	var winter := CharacterLook.with_outfit(CharacterLook.default_look(), 4)
+	NetworkManager.roster[1].look = CharacterLook.pack(winter)
+	_player.apply_loadout("rifle")
+	await _frames(3)
+	w = _player.current_weapon
+	_check((w.get_node(^"ArmR") as MeshInstance3D).mesh == WeaponModel.get_arm_mesh("rifle", false, winter),
+		"first-person arms wear the outfit's sleeves and gloves")
+	NetworkManager.roster[1].look = saved
+	_player.apply_loadout("rifle")
+	await _frames(40)
+
+	# Win / lose / draw at the end of a match (the time-up text too).
+	var team := Match.get_team(1)
+	var mine := GameConfig.TEAM_NAMES[team] if team >= 0 and team < 2 else ""
+	if Match.is_team_mode() and mine != "":
+		_check(Audio.match_result("Time's up — %s team wins!" % mine) == "win", "match end: time-up win plays the win sound")
+	_check(Audio.match_result("Draw!") == "draw" and Audio.match_result("Time's up — Draw!") == "draw",
+		"match end: a draw has its own sound")
+	_check(Audio.match_result("Somebody Else wins!") == "lose", "match end: a loss plays the lose sound")
 
 
 func _test_loadout_on_respawn() -> void:
@@ -1119,6 +1277,7 @@ func _test_bomb_defusal() -> void:
 	NetworkManager.roster[402].team = 0
 	var defender := _level.spawn_player(402, "Defender", Transform3D(Basis.IDENTITY, Vector3(0, 0, 14)))
 	Match.start_match()
+	b.phase_time_left = 5.0 # time for the buying checks
 	await _frames(2)
 	_check(b.round_number == 1 and b.phase == BombRules.Phase.FREEZE, "round 1 starts in freeze time")
 	_check(b.is_attacker(1) and not b.is_attacker(402), "red attacks, blue defends")
@@ -1129,6 +1288,7 @@ func _test_bomb_defusal() -> void:
 	Input.action_release(&"move_forward")
 	_check(Vector2(_player.global_position.x - start.x, _player.global_position.z - start.z).length() < 0.05,
 		"movement frozen during freeze time")
+	b.phase_time_left = minf(b.phase_time_left, 0.2) # end the (long) test freeze now
 	await _frames(30)
 	_check(b.phase == BombRules.Phase.LIVE, "round goes live after freeze")
 	_check(b.bomb_carrier == 1 and b.bomb_state == BombRules.BombState.CARRIED, "the attacker gets the bomb when the round goes live")
@@ -1169,6 +1329,19 @@ func _test_bomb_defusal() -> void:
 		"no helmet: head hits ignore armour")
 	_player.health.helmet = true
 	_player.health.heal(100.0)
+
+	# Enemy name tags: only under the crosshair or up close, never far off to the side.
+	defender.global_position = _player.global_position + Vector3(0, 0, -15)
+	_aim_at(defender.global_position + Vector3(12, 1.7, 0))
+	await _frames(3)
+	await get_tree().process_frame
+	var tag := defender.get_node(^"NameTag") as Label3D
+	_check(not tag.visible, "an enemy's name is hidden when not aimed at")
+	_aim_at(defender.global_position + Vector3.UP * 1.9)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_check(tag.visible and not (tag.get_node(^"TagHealth") as Label3D).visible,
+		"aiming at an enemy shows the name (no health bar)")
 
 	# Drop + pick up.
 	b.on_player_down(1, _player.global_position + Vector3(0.5, 0, 0))
@@ -1242,6 +1415,11 @@ func _test_bomb_defusal() -> void:
 	defender.health.take_damage(500.0, _player)
 	await _frames(2)
 	_check(b.round_reason == "Defenders eliminated", "eliminating the defenders wins the round")
+	await _frames(40)
+	var body := defender.get_node(^"ThirdPerson/Model") as PlayerModel
+	_check(defender.visible and body._dead and absf(body.rotation.x) + absf(body.rotation.z) > 0.2,
+		"the dead player falls over (death animation) instead of vanishing")
+	_check(not (defender.get_node(^"NameTag") as Label3D).visible, "no name tag over a body")
 	_check(Economy.money_of(1) == money_before + Economy.KILL_REWARD + Economy.WIN_REWARD,
 		"pistol kill $%d + round win $%d ($%d)" % [Economy.KILL_REWARD, Economy.WIN_REWARD, Economy.money_of(1)])
 	_check(Match.is_ended() and Match.winner_text == "Red team wins!", "match ends at the round limit (%s)" % Match.winner_text)
@@ -1256,6 +1434,24 @@ func _test_bomb_defusal() -> void:
 	_check(b.attacking_team != first and b.sides_swapped, "sides swap at halftime")
 	_check(Economy.money_of(1) == Economy.START_MONEY and Economy.money_of(402) == Economy.START_MONEY,
 		"halftime resets the money")
+
+	# Overtime: first to 2 → regulation is 2 rounds; 1–1 → overtime (halves of 1 round).
+	Match.state = Match.State.PLAYING
+	b.halftime_after = -1
+	b.overtime_half = 1
+	Match.start_match()
+	b._end_round(0, "test")
+	b._start_round()
+	b._end_round(1, "test")
+	_check(b.overtime == 1 and b.win_target == 3 and not Match.is_ended(),
+		"level at the end of regulation → overtime, first to %d" % b.win_target)
+	b._start_round()
+	_check(b.sides_swapped and Economy.money_of(1) == Economy.OVERTIME_MONEY, "overtime: sides swap, $%d each" % Economy.OVERTIME_MONEY)
+	b._end_round(0, "test")
+	b._start_round()
+	b._end_round(0, "test")
+	_check(Match.is_ended() and "overtime" in Match.winner_text, "overtime winner takes the match (%s)" % Match.winner_text)
+	b.overtime_half = 3
 
 	_level.despawn_player(402)
 	NetworkManager.roster.erase(402)
@@ -1455,95 +1651,56 @@ func _test_performance() -> void:
 
 
 func _test_maps() -> void:
-	# Warehouse: ramp from the ground up to the catwalk (3 m).
-	await _load_map("res://scenes/levels/warehouse.tscn")
-	_check(_level.blue_spawn_points.size() >= 3 and _level.red_spawn_points.size() >= 3, "warehouse has team spawns")
+	# Docks: lights per preset, the warehouse echo, the ramp up onto A Long.
+	await _load_map("res://scenes/levels/docks.tscn")
+	_check(_level.blue_spawn_points.size() >= 3 and _level.red_spawn_points.size() >= 3, "docks has team spawns")
 	SettingsManager.set_graphics_quality(GraphicsPreset.Quality.LOW)
 	_check(not (_level.get_node("Lights") as Node3D).visible, "Low preset turns decorative lights off")
 	SettingsManager.set_graphics_quality(GraphicsPreset.Quality.MEDIUM)
 	_check((_level.get_node("Lights") as Node3D).visible, "Medium preset turns them back on")
 	await _frames(40)
-	_check(_player.is_on_floor(), "warehouse: player lands on the floor")
-	_reset_player(Vector3(15, 0.1, -2.0))
-	Input.action_press(&"move_forward")
-	var top := 0.0
-	for i in 150:
-		await get_tree().physics_frame
-		top = maxf(top, _player.global_position.y)
-	_release_all()
-	_check(top > 2.8, "warehouse: ramp reaches the catwalk (max y=%.2f)" % top)
-	# Reverb zones: the same point query the audio engine uses.
-	var hall := _reverb_zone_at(Vector3(0, 2, 0))
-	var office := _reverb_zone_at(Vector3(-18.5, 1.5, 12.5))
-	_check(hall and hall.reverb_bus_name == &"ReverbHall" and office and office.reverb_bus_name == &"ReverbRoom"
-		and office.priority > hall.priority, "warehouse: hall echo, drier offices (reverb zones)")
-	_check(_reverb_zone_at(Vector3(0, 2, 40)) == null, "no reverb outside the building")
-
-	# Courtyard: ramp inside the west building to the upper floor (3.6 m).
-	await _load_map("res://scenes/levels/courtyard.tscn")
-	await _frames(40)
-	_check(_player.is_on_floor(), "courtyard: player lands on the floor")
-	_reset_player(Vector3(-23.5, 0.1, 7.7))
-	Input.action_press(&"move_forward")
-	top = 0.0
-	for i in 150:
-		await get_tree().physics_frame
-		top = maxf(top, _player.global_position.y)
-	_release_all()
-	_check(top > 3.4, "courtyard: ramp reaches the upper floor (max y=%.2f)" % top)
-
-	# Rooftops: street ramp up to the north-west roof (4 m).
-	await _load_map("res://scenes/levels/rooftops.tscn")
-	await _frames(40)
-	_check(_player.is_on_floor(), "rooftops: player lands")
-	_reset_player(Vector3(-16, 0.1, 2.5))
-	top = await _walk_forward_max_y(150)
-	_check(top > 3.8, "rooftops: ramp reaches the roof (max y=%.2f)" % top)
-	_reset_player(Vector3(-10, 4.1, -14), -PI * 0.5) # face +x, across the bridge
-	await _frames(5)
-	var across := await _walk_forward_max_y(220)
-	_check(_player.global_position.x > 8.0 and _player.global_position.y > 3.8,
-		"rooftops: bridge crosses to the other roof (x=%.1f, y=%.2f)" % [_player.global_position.x, _player.global_position.y])
-
-	# Docks: gangway up to the ship deck (3 m).
-	await _load_map("res://scenes/levels/docks.tscn")
-	await _frames(40)
 	_check(_player.is_on_floor(), "docks: player lands")
-	_reset_player(Vector3(-18, 0.1, -3))
+	var hall := _reverb_zone_at(Vector3(0, 2, 0))
+	_check(hall and hall.reverb_bus_name == &"ReverbHall", "docks: the Port Authority warehouse echoes (reverb zone)")
+	_check(_reverb_zone_at(Vector3(4, 2, 30)) == null, "no reverb out on the quay")
+	_reset_player(Vector3(48, 0.1, -13))
 	await _walk_forward_max_y(200)
-	_check(_player.global_position.y > 2.95 and _player.global_position.z < -16.0,
-		"docks: gangway leads onto the deck (y=%.2f, z=%.1f)" % [_player.global_position.y, _player.global_position.z])
+	_check(_player.global_position.y > 1.9 and _player.global_position.z < -24.0,
+		"docks: ramp from T spawn up onto A Long (y=%.2f, z=%.1f)" % [_player.global_position.y, _player.global_position.z])
+	_reset_player(Vector3(2, 0.1, 36), PI) # facing the water
+	await _walk_forward_max_y(90)
+	_check(_player.global_position.z < 40.0 and _player.global_position.y > -0.5, "docks: the quay edge keeps players out of the water")
 
-
-	# Kasbah: A ramp onto the terrace, Mid doors, the covered B Apartments.
-	await _load_map("res://scenes/levels/kasbah.tscn")
+	# Oasis: A ramp onto the terrace, Mid doors, the covered B Apartments.
+	await _load_map("res://scenes/levels/oasis.tscn")
 	await _frames(40)
-	_check(_player.is_on_floor(), "kasbah: player lands")
+	_open_all_doors()
+	_check(_player.is_on_floor(), "oasis: player lands")
 	_reset_player(Vector3(28, 0.1, -10.5))
 	await _walk_forward_max_y(150)
 	_check(_player.global_position.y > 0.95 and _player.global_position.z < -18.5,
-		"kasbah: A ramp leads up onto the site terrace (y=%.2f, z=%.1f)" % [_player.global_position.y, _player.global_position.z])
+		"oasis: A ramp leads up onto the site terrace (y=%.2f, z=%.1f)" % [_player.global_position.y, _player.global_position.z])
 	_reset_player(Vector3(0, 0.1, 4))
 	await _walk_forward_max_y(150)
-	_check(_player.global_position.z < -6.0, "kasbah: Mid doors are passable (z=%.1f)" % _player.global_position.z)
+	_check(_player.global_position.z < -6.0, "oasis: Mid doors are passable (z=%.1f)" % _player.global_position.z)
 	_reset_player(Vector3(-32, 0.1, 22))
 	await _walk_forward_max_y(330)
-	_check(_player.global_position.z < -2.0, "kasbah: B Apartments corridor is passable (z=%.1f)" % _player.global_position.z)
+	_check(_player.global_position.z < -2.0, "oasis: B Apartments corridor is passable (z=%.1f)" % _player.global_position.z)
 	# Enterable houses: in through a door, up the stairs.
 	_reset_player(Vector3(32, 0.1, -6.2), PI / 2)
 	await _walk_forward_max_y(150)
-	_check(_player.global_position.x < 25.0, "kasbah: door into the house on A Long (x=%.1f)" % _player.global_position.x)
+	_check(_player.global_position.x < 25.0, "oasis: door into the house on A Long (x=%.1f)" % _player.global_position.x)
 	_reset_player(Vector3(19.15, 0.1, -8.5), PI)
 	var upstairs := await _walk_forward_max_y(200)
-	_check(upstairs > 3.9, "kasbah: stairs to the house's upper floor (y=%.2f)" % upstairs)
+	_check(upstairs > 3.9, "oasis: stairs to the house's upper floor (y=%.2f)" % upstairs)
 	_reset_player(Vector3(-33, 0.1, 0.3), -PI / 2)
 	await _walk_forward_max_y(150)
-	_check(_player.global_position.x > -27.0, "kasbah: door into the house by B (x=%.1f)" % _player.global_position.x)
+	_check(_player.global_position.x > -27.0, "oasis: door into the house by B (x=%.1f)" % _player.global_position.x)
 
 	# Radar + location names (built from the map's collision shapes).
 	var radar: Minimap = _level.hud._minimap
 	_check(radar._polys.size() > 60, "radar outline built from the map (%d shapes)" % radar._polys.size())
-	_check((_level.hud._banner.get_node(^"Title") as Label).text == "KASBAH", "map name banner shows KASBAH")
+	_check((_level.hud._banner.get_node(^"Title") as Label).text == "OASIS", "map name banner shows OASIS")
 	var tex := load("res://assets/textures/surfaces_albedo.png") as TextureLayered
 	var nrm := load("res://assets/textures/surfaces_normal.png") as TextureLayered
 	_check(tex != null and nrm != null and tex.get_layers() == 7 and nrm.get_layers() == 7
@@ -1591,13 +1748,25 @@ func _test_maps() -> void:
 			["factory", Vector3(5, 0.1, 6), PI, func(p: Vector3) -> bool: return p.z > 20.0, "Lower Mid into B"],
 			["office", Vector3(0, 0.1, 40), 0.0, func(p: Vector3) -> bool: return p.z < 24.0, "front doors into the lobby"],
 			["office", Vector3(20, 0.1, 4), 0.0, func(p: Vector3) -> bool: return p.y > 3.5, "stairs up to the mezzanine"],
-			["subway", Vector3(-15, 0.1, 22), 0.0, func(p: Vector3) -> bool: return p.z < 0.0, "west platform"],
-			["subway", Vector3(6, -1.1, -20), 0.0, func(p: Vector3) -> bool: return p.y > -0.1 and p.z < -30.0, "climb out of the track bed"],
-			["subway", Vector3(-10, 0.1, 4.7), -PI / 2, func(p: Vector3) -> bool: return p.x > -3.0, "walk through the train"],
-			["rooftops", Vector3(-4, 0.1, -17.1), PI / 2, func(p: Vector3) -> bool: return p.x < -9.0, "door into the north-west building"],
-			["rooftops", Vector3(-19.9, 0.1, -19.85), -PI / 2, func(p: Vector3) -> bool: return p.y > 3.9, "stairs up to its roof"],
-			["docks", Vector3(16, 0.1, 16.8), -PI / 2, func(p: Vector3) -> bool: return p.x > 21.0, "door into the harbour office"],
-			["docks", Vector3(20.1, 0.1, 13.15), -PI / 2, func(p: Vector3) -> bool: return p.y > 3.4, "harbour office stairs"],
+			# Subway: A Long into A, through a train from Mid, out of a track bed, CT and T routes.
+			["subway", Vector3(-25, 0.1, -13), 0.0, func(p: Vector3) -> bool: return p.z < -24.0, "A Long through the door into A"],
+			["subway", Vector3(-25, 0.1, 13), PI, func(p: Vector3) -> bool: return p.z > 24.0, "B Long through the door into B"],
+			["subway", Vector3(-19, 0.1, -5), 0.0, func(p: Vector3) -> bool: return p.z < -13.0, "walk through the train from Mid to A Long"],
+			["subway", Vector3(-5.2, 0.1, 5), PI, func(p: Vector3) -> bool: return p.z > 13.0, "Mid through the B train to B Long"],
+			["subway", Vector3(26, -1.1, -10), -PI / 2, func(p: Vector3) -> bool: return p.y > -0.1, "ramp out of the track bed"],
+			["subway", Vector3(-45, 0.1, -9), 0.0, func(p: Vector3) -> bool: return p.z < -26.0, "CT up to A"],
+			["subway", Vector3(-45, 0.1, 9), PI, func(p: Vector3) -> bool: return p.z > 26.0, "CT down to B"],
+			["subway", Vector3(-44, 0.1, 0), -PI / 2, func(p: Vector3) -> bool: return p.x > -30.0, "CT through the ticket hall into Mid"],
+			["subway", Vector3(43, 0.1, -9), 0.0, func(p: Vector3) -> bool: return p.z < -13.0, "T up to A Long"],
+			# Docks: Mid through the warehouse, A Short / B Short, B Long, the CT routes.
+			["docks", Vector3(30, 0.1, 0), PI / 2, func(p: Vector3) -> bool: return p.x < 10.0, "T Mid through the east door into the warehouse"],
+			["docks", Vector3(-30, 0.1, 0), -PI / 2, func(p: Vector3) -> bool: return p.x > -10.0, "CT Mid through the west door"],
+			["docks", Vector3(-5, 0.1, -5), 0.0, func(p: Vector3) -> bool: return p.z < -24.0, "north door up A Short into A"],
+			["docks", Vector3(4, 0.1, 5), PI, func(p: Vector3) -> bool: return p.z > 22.0, "south door down B Short onto B"],
+			["docks", Vector3(48, 0.1, 9), PI, func(p: Vector3) -> bool: return p.z > 22.0, "the road from T spawn down to B Long"],
+			["docks", Vector3(-44, 0.1, -10), 0.0, func(p: Vector3) -> bool: return p.z < -32.0, "CT to the A yard"],
+			["docks", Vector3(-46, 0.1, 10), PI, func(p: Vector3) -> bool: return p.z > 26.0, "CT down to the B quay"],
+			["docks", Vector3(24, 2.1, -27), PI / 2, func(p: Vector3) -> bool: return p.x < 4.0, "along A Long and down into A"],
 			# Bunker: A Long up to the balcony over A, B Long down the tunnel, Mid.
 			["bunker", Vector3(-41, 0.1, -8.5), 0.0, func(p: Vector3) -> bool: return p.y > 2.4 and p.z < -24.0, "A Long ramp up to the upper corridor"],
 			["bunker", Vector3(-30, 2.6, -31), -PI / 2, func(p: Vector3) -> bool: return p.x > -13.0, "A Long Upper onto the balcony over A"],
@@ -1623,6 +1792,7 @@ func _test_maps() -> void:
 			await _load_map("res://scenes/levels/%s.tscn" % route[0])
 			await _frames(30)
 			_check(_player.is_on_floor(), "%s: player lands" % route[0])
+			_open_all_doors()
 		_reset_player(route[1], route[2])
 		await _frames(2)
 		# The check sees where the walk ended, with y = the highest point reached.
@@ -1983,6 +2153,218 @@ func _aim_at(point: Vector3) -> void:
 	var flat := Vector3(point.x - eye.x, 0, point.z - eye.z)
 	_player.rotation.y = atan2(-flat.x, -flat.z)
 	_player.head.rotation.x = atan2(point.y - eye.y, flat.length())
+
+
+## Routes walk straight through doorways: open every door first.
+func _open_all_doors() -> void:
+	for d in get_tree().get_nodes_in_group(Door.GROUP):
+		(d as Door).set_open(1, true)
+
+
+## Office: a door opens with F (away from you), breaks where it is shot;
+## glass cracks, then shatters, and bullets / grenades go through.
+func _test_doors_and_glass() -> void:
+	await _load_map("res://scenes/levels/office.tscn")
+	await _frames(30)
+	var doors := get_tree().get_nodes_in_group(Door.GROUP)
+	_check(doors.size() >= 8, "office has doors (%d)" % doors.size())
+	var panes := get_tree().get_nodes_in_group(GlassPane.GROUP)
+	_check(panes.size() >= 10, "office has glass panes (%d)" % panes.size())
+	# The store room door (StoreWall, z = -12).
+	var door: Door = null
+	for d: Door in doors:
+		if (d as Node3D).global_position.distance_to(Vector3(13.9, 0, -12)) < 0.5:
+			door = d
+	_check(door != null and not door.is_open(), "store room door found, closed")
+	if door == null:
+		return
+	_reset_player(Vector3(13.9, 0.1, -9.6))
+	await _frames(5)
+	await _walk_forward_max_y(60)
+	_check(_player.global_position.z > -11.7, "a closed door blocks the way (z=%.2f)" % _player.global_position.z)
+	_reset_player(Vector3(13.9, 0.1, -10.2))
+	await _frames(3)
+	_press_action(&"interact")
+	await _frames(30)
+	_check(door.is_open() and door.open_side == -1, "F opens the door away from the player (side %d)" % door.open_side)
+	await _walk_forward_max_y(90)
+	_check(_player.global_position.z < -13.0, "walk through the open door (z=%.2f)" % _player.global_position.z)
+	_reset_player(Vector3(13.2, 0.1, -12.9), PI) # turn round, the leaf is beside us
+	_aim_at(Vector3(13.9, 1.2, -12.0))
+	await _frames(3)
+	_press_action(&"interact")
+	await _frames(30)
+	_check(not door.is_open(), "F again closes it")
+	# Shoot the closed door: the piece under the crosshair splinters and breaks.
+	_reset_player(Vector3(13.9, 0.1, -7.0))
+	_player.select_slot(0, true)
+	_player.health.protect(0.0)
+	await _frames(20)
+	var target := Vector3(13.6, 1.25, -12)
+	var before := door.pieces_left()
+	for i in 6:
+		_aim_at(target)
+		Input.action_press(&"shoot")
+		await _frames(2)
+		Input.action_release(&"shoot")
+		await _frames(10)
+	_check(door.pieces_left() < before, "shots break the door where they hit (%d → %d pieces)" % [before, door.pieces_left()])
+	var eye := _player.camera.global_position
+	var q := PhysicsRayQueryParameters3D.create(eye, eye + (target - eye) * 1.5, 1)
+	var through := get_tree().root.get_world_3d().direct_space_state.intersect_ray(q)
+	var past: bool = through.is_empty() or (through.position as Vector3).z < -12.2
+	_check(past, "a bullet hole: the view goes through the broken piece")
+
+	# Glass: the conference room wall (z = 14).
+	var pane: GlassPane = null
+	for gp: GlassPane in panes:
+		if (gp as Node3D).global_position.distance_to(Vector3(-19.5, 1.6, 14)) < 2.5:
+			pane = gp
+	_check(pane != null and not pane.broken, "conference room glass found")
+	if pane == null:
+		return
+	_reset_player(Vector3(pane.global_position.x, 0.1, 10.0), PI)
+	await _frames(10)
+	_aim_at(pane.global_position)
+	_player.select_slot(1, true) # the pistol: one shot at a time
+	await _frames(20)
+	_aim_at(pane.global_position)
+	Input.action_press(&"shoot")
+	await _frames(2)
+	Input.action_release(&"shoot")
+	await _frames(15)
+	_check(pane.cracked and not pane.broken, "the first shot cracks the glass")
+	_aim_at(pane.global_position + Vector3(0.3, 0.2, 0))
+	Input.action_press(&"shoot")
+	await _frames(2)
+	Input.action_release(&"shoot")
+	await _frames(15)
+	_check(pane.broken, "the second shot shatters it")
+	_reset_player(Vector3(pane.global_position.x, 0.1, 12.5), PI)
+	await _walk_forward_max_y(60)
+	_check(_player.global_position.z > 14.3, "walk through the shattered window (z=%.2f)" % _player.global_position.z)
+	# An HE blast shatters glass round it and splinters doors.
+	var other: GlassPane = null
+	for gp: GlassPane in panes:
+		if not (gp as GlassPane).broken:
+			other = gp
+			break
+	_player.throwables._blast_breakables(other.global_position + Vector3(0, 0, 1.0), Throwables.HE_RADIUS, 160.0)
+	_check(other.broken, "an HE blast shatters nearby windows")
+	_player.select_slot(0, true)
+
+
+## Training bots on the current map (Office): they spawn, get a navigation
+## mesh, walk off and can be removed again.
+func _test_bots() -> void:
+	_player.health.protect(999.0)
+	Match.bots.set_count(2)
+	await _frames(5)
+	var bots := _level.get_players().filter(func(p: PlayerController) -> bool: return p.is_bot)
+	_check(bots.size() == 2 and NetworkManager.roster.has(BotManager.BOT_ID_BASE), "2 bots join (roster + players)")
+	_check(_level.has_node("BotNavigation"), "a navigation mesh is baked for them")
+	_check(bots.size() == 2 and (bots[0] as PlayerController).has_node("BotBrain"), "the server drives them (BotBrain)")
+	var start := {}
+	for b: PlayerController in bots:
+		start[b] = b.global_position
+	await _frames(240)
+	var moved := 0
+	for b: PlayerController in bots:
+		if is_instance_valid(b) and b.global_position.distance_to(start[b]) > 3.0:
+			moved += 1
+	_check(moved >= 1, "bots walk around the map (%d of 2 moved)" % moved)
+	Match.bots.set_count(0)
+	await _frames(3)
+	_check(Match.bots.count() == 0 and _level.get_players().filter(func(p: PlayerController) -> bool: return p.is_bot).is_empty(),
+		"bots can be removed again")
+	_player.health.protect(0.0)
+
+
+## Character looks: data, meshes, sync through the roster, bots, the
+## Character screen, the voice.
+func _test_characters() -> void:
+	var junk := CharacterLook.sanitize({ "body": 7, "face": 99, "outfit": -3, "boots": "x" })
+	_check(junk.body == 1 and junk.face == CharacterLook.FEMALE_FACES.size() - 1 and junk.outfit == 0 and junk.boots == 0,
+		"looks: out-of-range values are clamped (%s)" % str(junk))
+	var military := CharacterLook.with_outfit(CharacterLook.default_look(), 1)
+	_check(military.headwear == 2 and military.pants == 1, "looks: picking an outfit dresses its kit")
+	_check(CharacterLook.unpack(CharacterLook.pack(military)) == CharacterLook.sanitize(military), "looks: pack / unpack round trip")
+	var female := military.duplicate()
+	female.body = 1
+	var m1: Dictionary = CharacterMesh.get_meshes(military)
+	var m2: Dictionary = CharacterMesh.get_meshes(female)
+	_check(m1.body != m2.body and CharacterMesh.get_meshes(military.duplicate()).body == m1.body,
+		"looks: male / female meshes differ, identical looks share theirs")
+	var uv: PackedVector2Array = (m1.leg as ArrayMesh).surface_get_arrays(0)[Mesh.ARRAY_TEX_UV]
+	var camo := false
+	for v in uv:
+		camo = camo or v.x > 0.5
+	_check(camo, "looks: woodland pants carry the camouflage pattern")
+	var r1 := CharacterLook.random(42)
+	_check(r1 == CharacterLook.random(42) and CharacterLook.random(42, 1).body == 1, "looks: random looks repeat per seed")
+
+	# Your own look reaches your model through the roster.
+	var saved: Dictionary = SettingsManager.character.duplicate()
+	var mine := CharacterLook.with_outfit(CharacterLook.default_look(), 4)
+	mine.body = 1
+	mine.face = 3
+	NetworkManager.roster[1].look = CharacterLook.pack(mine)
+	NetworkManager.roster_changed.emit()
+	await _frames(1)
+	var model := _player.get_node(^"ThirdPerson/Model") as PlayerModel
+	_check(model.get_look() == CharacterLook.sanitize(mine), "your model wears your look (female, winter kit)")
+	NetworkManager.roster[1].look = CharacterLook.pack(saved)
+	NetworkManager.roster_changed.emit()
+
+	# Bots: random looks, every third one a woman.
+	_player.health.protect(999.0)
+	Match.bots.set_count(3)
+	await _frames(3)
+	var third := BotManager.BOT_ID_BASE + 2
+	var bot := _level.get_player(third)
+	_check(bot != null and NetworkManager.look_of(third).body == 1 and NetworkManager.get_player_name(third) == "BOT Nimali"
+		and (bot.get_node(^"ThirdPerson/Model") as PlayerModel).get_look() == NetworkManager.look_of(third),
+		"bots get a random look (the third is a woman: %s)" % NetworkManager.get_player_name(third))
+	# The voice: a grunt when hit, a cry when killed.
+	if bot:
+		bot.global_position = _player.global_position + Vector3(0, 0, -3)
+		var grunts: int = Audio.stats.get("3d:grunt", 0) + Audio.stats.get("3d:grunt_rough", 0)
+		var cries: int = Audio.stats.get("3d:death_cry", 0) + Audio.stats.get("3d:death_cry_rough", 0)
+		bot.health.take_damage(20.0)
+		await _frames(2)
+		bot.health.take_damage(500.0)
+		await _frames(2)
+		_check(Audio.stats.get("3d:grunt", 0) + Audio.stats.get("3d:grunt_rough", 0) > grunts
+			and Audio.stats.get("3d:death_cry", 0) + Audio.stats.get("3d:death_cry_rough", 0) > cries,
+			"voices: a grunt when hit, a cry when killed")
+	Match.bots.set_count(0)
+	await _frames(3)
+	_player.health.protect(0.0)
+
+	# The Character screen: step through options, Done saves.
+	var screen := CharacterScreen.new()
+	get_tree().root.add_child(screen)
+	screen.open()
+	screen.step("body", 1 - int(screen.look.body))
+	var face_name: String = (screen._values["face"] as Button).text
+	_check(screen.look.body == 1 and CharacterLook.FEMALE_FACES.any(func(f: Dictionary) -> bool: return f.name == face_name),
+		"character screen: switching to a female body offers female faces (%s)" % face_name)
+	screen.look = CharacterLook.with_outfit(screen.look, 0)
+	screen.step("outfit", 3)
+	_check(screen.look.outfit == 3 and screen.look.headwear == CharacterLook.OUTFITS[3].kit.headwear,
+		"character screen: an outfit brings its kit (%s)" % (screen._values["headwear"] as Button).text)
+	screen.step("boots", 1)
+	var chosen: Dictionary = screen.look.duplicate()
+	(screen.find_child("DoneButton", true, false) as Button).pressed.emit()
+	_check(SettingsManager.character == CharacterLook.sanitize(chosen) and not screen.visible,
+		"character screen: Done saves the look")
+	var cfg := ConfigFile.new()
+	cfg.load(SettingsManager.settings_path)
+	_check(CharacterLook.sanitize(cfg.get_value("player", "character", {})) == CharacterLook.sanitize(chosen),
+		"settings: the look is written to the settings file")
+	screen.queue_free()
+	SettingsManager.character = saved
+	SettingsManager.save()
 
 
 func _release_all() -> void:

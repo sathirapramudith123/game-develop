@@ -23,6 +23,8 @@ signal money_event(amount: int, text: String)
 signal buy_refused(reason: String)
 
 const START_MONEY := 800
+## Everyone's money at the start of each overtime half.
+const OVERTIME_MONEY := 10000
 const MAX_MONEY := 16000
 ## Buying stays open this long after the freeze time.
 const BUY_TIME := 20.0
@@ -49,6 +51,7 @@ const ITEMS := {
 	"smg": { "name": "V-10 SMG", "price": 1250, "kind": "primary" },
 	"shotgun": { "name": "M-12 Shotgun", "price": 1100, "kind": "primary" },
 	"sniper": { "name": "LR-50 Sniper", "price": 4750, "kind": "primary" },
+	"lmg": { "name": "K-100 LMG", "price": 5200, "kind": "primary" },
 	"vest": { "name": "Kevlar Vest", "price": 650, "kind": "armor" },
 	"vest_helmet": { "name": "Kevlar + Helmet", "price": 1000, "kind": "armor" },
 	"he": { "name": "HE Grenade", "price": 300, "kind": "grenade", "grenade": Throwables.Kind.HE },
@@ -58,7 +61,7 @@ const ITEMS := {
 }
 ## Buy menu layout: columns of item ids.
 const MENU := [
-	["rifle", "smg", "shotgun", "sniper"],
+	["rifle", "smg", "shotgun", "sniper", "lmg"],
 	["vest", "vest_helmet"],
 	["he", "flash", "smoke", "molotov"],
 ]
@@ -244,12 +247,13 @@ func _money_event(amount: int, text: String) -> void:
 	money_event.emit(amount, text)
 
 
-## Server: a new half (match start or halftime) — money and gear back to the start.
-func server_reset() -> void:
+## Server: a new half (match start, halftime, overtime halves) — money and
+## gear back to the start (`money` each).
+func server_reset(money: int = START_MONEY) -> void:
 	_gear.clear()
 	_loss_streak = [0, 0]
 	for id: int in NetworkManager.roster:
-		NetworkManager.roster[id].money = START_MONEY
+		NetworkManager.roster[id].money = money
 
 
 ## Server, at the start of each round before everyone respawns: survivors

@@ -14,6 +14,7 @@ extends Node
 ## in STATE_PATH, so a crash in one stage (e.g. a broken Vulkan driver) is
 ## recorded and the test carries on instead of looping.
 
+@warning_ignore_start("static_called_on_instance") # static helpers on autoloads (NetworkManager, SettingsManager…)
 signal finished(report: Dictionary)
 
 const DIR := "user://benchmarks/"
@@ -24,7 +25,7 @@ const REPORT_FORMAT := 1
 const RENDERERS: Array[String] = ["gl_compatibility", "forward_plus"]
 const RENDERER_NAMES := { "gl_compatibility": "OpenGL", "forward_plus": "Vulkan" }
 ## One indoor map with lamps + the biggest outdoor map.
-const MAPS: Array[String] = ["warehouse", "courtyard"]
+const MAPS: Array[String] = ["office", "docks"]
 const DURATION := 5.0
 const BOTS := 12
 const TARGET_AVG_FPS := 60.0

@@ -9,12 +9,13 @@ extends Node
 ##
 ## Run it:
 ##   • Settings → Graphics → "Run benchmark"
-##   • godot --path . -- --benchmark [--duration 10] [--bots 12] [--maps warehouse,courtyard]
+##   • godot --path . -- --benchmark [--duration 10] [--bots 12] [--maps office,docks]
 ##     (add --quit to exit when done, --no-batching to compare without
 ##     StaticBatcher; use a real window, not --headless)
 ##
 ## Use it on the minimum-spec PC: the "1% low" is what players feel.
 
+@warning_ignore_start("static_called_on_instance") # static helpers on autoloads (NetworkManager, SettingsManager…)
 signal finished(results: Dictionary)
 
 const RESULTS_DIR := "user://benchmarks/"

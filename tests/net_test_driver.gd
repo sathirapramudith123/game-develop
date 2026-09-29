@@ -5,6 +5,8 @@ extends Node
 ## client: joins, walks, then shoots the host until the host dies.
 ## Both sides check that state replicated correctly and exit 0 on success.
 
+# _wait_for() polls until a value is returned: "x if ready else null" on purpose.
+@warning_ignore_start("incompatible_ternary")
 const TIMEOUT := 30.0
 
 var _role := "host"
@@ -38,6 +40,7 @@ func _ready() -> void:
 
 func _run_host() -> void:
 	NetworkManager.local_name = "Host"
+	SettingsManager.character = CharacterLook.with_outfit(CharacterLook.default_look(), 5) # stealth
 	# Team deathmatch, first kill wins, short results screen → quick map rotation.
 	Match.configure(GameConfig.Mode.TDM, 1)
 	Match.results_time = 3.0
@@ -56,6 +59,8 @@ func _run_host() -> void:
 		return _finish()
 	var client_id := client.peer_id # the node is freed when the client leaves
 	_check(Match.get_team(1) == 0 and Match.get_team(client_id) == 1, "teams auto-balanced (host blue, client red)")
+	var client_look: Dictionary = (client.get_node(^"ThirdPerson/Model") as PlayerModel).get_look()
+	_check(client_look.body == 1 and client_look.outfit == 3, "host sees the client's character (female, desert)")
 	var start := client.global_position
 	var moved: Variant = await _wait_for(func() -> Variant:
 		return true if client.global_position.distance_to(start) > 1.0 else null)
@@ -120,6 +125,9 @@ func _run_host() -> void:
 func _run_client() -> void:
 	await get_tree().create_timer(1.0).timeout
 	NetworkManager.local_name = "Client"
+	var mine := CharacterLook.with_outfit(CharacterLook.default_look(), 3) # desert
+	mine.body = 1
+	SettingsManager.character = mine
 	_check(NetworkManager.join("127.0.0.1", _port) == OK, "client starts connecting")
 	var level: Level = await _wait_for(func() -> Variant: return _level())
 	var me: PlayerController = await _wait_for(func() -> Variant: return level.player if level else null)
@@ -129,6 +137,8 @@ func _run_client() -> void:
 	if me == null or host == null:
 		return _finish()
 	_check(NetworkManager.roster.size() == 2, "roster has both players")
+	_check((host.get_node(^"ThirdPerson/Model") as PlayerModel).get_look().outfit == 5,
+		"client sees the host's character (stealth)")
 
 	_check(Match.mode == GameConfig.Mode.TDM, "client knows the game mode (TDM)")
 	_check(Match.get_team(me.peer_id) == 1 and Match.get_team(1) == 0, "client sees the teams")
@@ -486,9 +496,9 @@ func _voice_exchange(other_id: int, my_freq: float, their_freq: float) -> VoiceP
 		var dt := get_process_delta_time()
 		t += dt
 		speak.call(dt)
-		var pb := VoiceChat.get_playback(other_id)
-		if t > 2.0 and pb and pb.packets_received > 20:
-			got = pb
+		var heard := VoiceChat.get_playback(other_id)
+		if t > 2.0 and heard and heard.packets_received > 20:
+			got = heard
 			break
 	# Keep talking so the other side also gets > 20 packets, even if it
 	# started listening later than we did.
@@ -512,14 +522,14 @@ func _voice_exchange(other_id: int, my_freq: float, their_freq: float) -> VoiceP
 
 ## Voice in both directions used `codec`, and Opus is really smaller.
 func _check_codec(pb: VoicePlayback, codec: int) -> void:
-	var name := VoiceCodec.codec_name(codec)
-	_check(VoiceChat.last_codec_sent == codec, "voice sent with %s" % name)
-	_check(pb != null and pb.last_codec == codec, "voice received as %s" % name)
+	var codec_label := VoiceCodec.codec_name(codec)
+	_check(VoiceChat.last_codec_sent == codec, "voice sent with %s" % codec_label)
+	_check(pb != null and pb.last_codec == codec, "voice received as %s" % codec_label)
 	if pb and pb.packets_received > 0:
 		var avg := float(pb.bytes_received) / pb.packets_received
 		var kbps := avg * 8.0 / 40.0
 		var ok := kbps < 40.0 if codec == VoiceCodec.CODEC_OPUS else kbps > 60.0
-		_check(ok, "%s voice ≈ %.0f kbps (%.0f bytes / 40 ms packet)" % [name, kbps, avg])
+		_check(ok, "%s voice ≈ %.0f kbps (%.0f bytes / 40 ms packet)" % [codec_label, kbps, avg])
 		# ~5 s of real-time voice: nearly all of it must arrive (ENet's
 		# throttle used to drop most unreliable packets under CPU load).
 		_check(pb.packets_received >= 60, "voice arrives without gaps (%d packets)" % pb.packets_received)
@@ -547,8 +557,41 @@ func _run_mixed_host() -> void:
 	_check(NetworkManager.roster[client_id].opus == false and NetworkManager.roster[1].opus == true,
 		"roster knows who has Opus")
 	_check_codec(await _voice_exchange(client_id, 500.0, 440.0), VoiceCodec.CODEC_ADPCM)
+	# A door and a window, made on both sides under the same path.
+	var door := _net_door(level, client.global_position)
+	var pane := _net_pane(level)
+	await get_tree().create_timer(1.5).timeout # the client builds its copies
+	door._server_toggle(door.global_position + Vector3(0, 0, 2))
+	for i in 3:
+		door.server_hit(door.leaf(0), door.leaf(0).global_position + Vector3(0, 1.0, 0), 20.0)
+	pane.server_hit(null, pane.global_position, 10.0)
+	pane.server_hit(null, pane.global_position, 10.0)
+	door.send_state_to(client_id) # the late-joiner path too
+	var closed: Variant = await _wait_for(func() -> Variant: return true if not door.is_open() else null)
+	_check(closed == true, "the client closed the door (host sees it)")
+	# Training bots: two join; the client sees them as players that move.
+	Match.bots.set_count(2)
+	_check(Match.bots.count() == 2 and level.get_players().size() == 4, "host adds 2 bots (%d players)" % level.get_players().size())
 	await _wait_for(func() -> Variant: return true if level.get_player(client_id) == null else null)
 	_finish()
+
+
+## Next to `near` (the client's player — the server only lets players use
+## doors within reach).
+func _net_door(level: Level, near: Vector3) -> Door:
+	var door := Door.new()
+	door.name = "NetDoor"
+	level.add_child(door)
+	door.global_position = Vector3(near.x, 0, near.z - 1.5)
+	return door
+
+
+func _net_pane(level: Level) -> GlassPane:
+	var pane := GlassPane.new()
+	pane.name = "NetPane"
+	level.add_child(pane)
+	pane.global_position = Vector3(34, 1.5, 30)
+	return pane
 
 
 func _run_mixed_client() -> void:
@@ -559,6 +602,27 @@ func _run_mixed_client() -> void:
 	var level: Level = await _wait_for(func() -> Variant: return _level())
 	await _wait_for(func() -> Variant: return level.get_player(1) if level and level.player else null)
 	_check_codec(await _voice_exchange(1, 440.0, 500.0), VoiceCodec.CODEC_ADPCM)
+	var door := _net_door(level, level.player.global_position)
+	var pane := _net_pane(level)
+	var opened: Variant = await _wait_for(func() -> Variant: return true if door.is_open() else null)
+	_check(opened == true and door.open_side == -1, "the host opened the door (client sees it swing away)")
+	var shattered: Variant = await _wait_for(func() -> Variant: return true if pane.broken else null)
+	_check(shattered == true, "the host's shots shatter the window on the client too")
+	_check(door.pieces_left() < 24, "the shot-out door piece is gone on the client (%d left)" % door.pieces_left())
+	await get_tree().create_timer(0.5).timeout
+	door.request_toggle(level.player.global_position)
+	var shut: Variant = await _wait_for(func() -> Variant: return true if not door.is_open() else null)
+	_check(shut == true, "the client closes the door through the server")
+	var bots: Variant = await _wait_for(func() -> Variant:
+		var bs := level.get_players().filter(func(p: PlayerController) -> bool: return p.is_bot)
+		return bs if bs.size() == 2 else null)
+	_check(bots != null and (bots[0] as PlayerController).player_name.begins_with("BOT"), "client sees the host's 2 bots")
+	if bots != null:
+		var start: Vector3 = (bots[0] as PlayerController).global_position
+		var moved: Variant = await _wait_for(func() -> Variant:
+			var b := bots[0] as PlayerController
+			return true if not is_instance_valid(b) or b.global_position.distance_to(start) > 2.0 else null)
+		_check(moved == true, "a bot moves around on the client")
 	await get_tree().create_timer(2.0).timeout # let the host finish its checks
 	NetworkManager.leave()
 	await _frames(30)

@@ -293,7 +293,7 @@ func _on_health_changed(current: float, maximum: float) -> void:
 	_health_icon.queue_redraw()
 
 
-## "KASBAH / BOMB DEFUSAL" in the top-right when a map loads and when each
+## "OASIS / BOMB DEFUSAL" in the top-right when a map loads and when each
 ## Bomb Defusal round starts; fades out after a few seconds. The kill feed
 ## moves down while it is shown.
 func _build_banner() -> void:
@@ -368,7 +368,7 @@ func _on_ammo_changed(in_magazine: int, reserve: int) -> void:
 		# Fire mode next to the name when the gun has more than one (B).
 		_weapon_label.text = _weapon.data.display_name + (
 			"  ·  %s" % _weapon.fire_mode().to_upper() if _weapon.data.fire_modes.size() > 1 else "")
-	var low := _weapon and in_magazine <= _weapon.data.magazine_size / 4
+	var low := _weapon and in_magazine <= _weapon.data.magazine_size / 4.0
 	_ammo_label.modulate = Color(1, 0.35, 0.3) if low else Color.WHITE
 
 
@@ -379,7 +379,7 @@ func _update_perf() -> void:
 	var prims := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_TOTAL_PRIMITIVES_IN_FRAME)
 	var vram := RenderingServer.get_rendering_info(RenderingServer.RENDERING_INFO_VIDEO_MEM_USED) / 1048576.0
 	_perf_label.text = "FPS %d  (%.1f ms)\nDraw calls %d  |  Tris %dk\nVRAM %.0f MB\nPreset %s  |  %s" % [
-		fps, frame_ms, draw_calls, prims / 1000, vram,
+		fps, frame_ms, draw_calls, prims / 1000.0, vram,
 		SettingsManager.graphics.display_name, RenderingServer.get_current_rendering_method()]
 	var level := get_parent() as Level
 	if level and level.dynamic_resolution and SettingsManager.dynamic_resolution:
@@ -433,8 +433,10 @@ func _on_kill_feed(killer_id: int, victim_id: int, weapon_name: String, headshot
 	panel.add_theme_stylebox_override(&"panel", _feed_style_mine if mine else _feed_style)
 	row.modulate = Color(1, 1, 1, 1) if mine else Color(1, 1, 1, 0.9)
 	_kill_feed.add_child(row)
+	# free(), not queue_free(): the count must drop now or this never ends
+	# (more than KILL_FEED_MAX kills within KILL_FEED_TIME froze the game).
 	while _kill_feed.get_child_count() > KILL_FEED_MAX:
-		_kill_feed.get_child(0).queue_free()
+		_kill_feed.get_child(0).free()
 	get_tree().create_timer(KILL_FEED_TIME).timeout.connect(row.queue_free)
 
 
@@ -590,6 +592,8 @@ func _update_match_bar() -> void:
 					role = "Protect the bomb at %s" % b.bomb_site if attacker else "Defuse the bomb at %s!" % b.bomb_site
 				else:
 					role = "Attack — plant the bomb at A or B" if attacker else "Defend — stop the plant or defuse"
+			if b.is_overtime():
+				role = "OVERTIME %d (first to %d) · %s" % [b.overtime, b.win_target, role]
 			_match_bar.text = role
 		GameConfig.Mode.TDM:
 			var my_team := Match.get_team(multiplayer.get_unique_id())
@@ -618,7 +622,8 @@ func _update_bomb_hud() -> void:
 			if b.waiting_for_players:
 				msg = "Waiting for players on both teams…"
 			else:
-				msg = ("Switching sides!\n" if b.sides_swapped else "") + "Round %d starts in %d" % [b.round_number, ceili(b.phase_time_left)]
+				var ot := ("OVERTIME %d — first to %d\n" % [b.overtime, b.win_target]) if b.is_overtime() else ""
+				msg = ot + ("Switching sides!\n" if b.sides_swapped else "") + "Round %d starts in %d" % [b.round_number, ceili(b.phase_time_left)]
 		BombRules.Phase.PLANTED:
 			msg = "BOMB PLANTED at %s" % b.bomb_site if b.phase_time_left > b.bomb_time - 3.0 else ""
 		BombRules.Phase.ROUND_END:
@@ -666,7 +671,7 @@ func _on_match_state_changed() -> void:
 		_refresh_vote()
 
 
-## "Vote for the next map: [1] Rooftops (2) …" on the results screen.
+## "Vote for the next map: [1] Docks (2) …" on the results screen.
 func _refresh_vote() -> void:
 	if Match.vote_maps.is_empty():
 		_next_map_label.text = "Next: %s" % GameConfig.map_name(GameConfig.next_map(NetworkManager.current_map, Match.mode))
@@ -714,7 +719,7 @@ func _fill_score_grid(grid: GridContainer) -> void:
 		_add_score_cell(grid, ("» " if VoiceChat.is_speaking(id) else "") + e.name, col)
 		_add_score_cell(grid, str(e.kills), col)
 		_add_score_cell(grid, str(e.deaths), col)
-		_add_score_cell(grid, "host" if id == 1 else str(e.ping), col)
+		_add_score_cell(grid, "host" if id == 1 else ("BOT" if BotManager.is_bot(id) else str(e.ping)), col)
 
 
 func _add_score_cell(grid: GridContainer, text: String, color: Color) -> void:

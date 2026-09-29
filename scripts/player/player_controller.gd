@@ -97,8 +97,14 @@ var _lean_target: float = 0.0
 var weapons: Dictionary = {}
 ## Grenades (quick-throw: G HE, Q Molotov, F flash, Z smoke).
 var throwables: Throwables
+## Remote players' bodies lie this long after the death animation.
+const CORPSE_TIME := 8.0
+## Counts lives, so a timer from an earlier death can't hide a respawned player.
+var _life: int = 0
 ## Seconds of flashbang blindness left (local player only; see GrenadeFx.flash).
 var blind_time: float = 0.0
+## A training bot (BotManager): the server drives it with a BotBrain.
+var is_bot: bool = false
 ## Grenade wheel open (hold 4): the mouse points at a grenade instead of looking.
 var grenade_wheel_open: bool = false
 ## Climbing onto a ledge (see Climb): true while pulling up.
@@ -107,6 +113,8 @@ var _climb_time: float = 0.0
 var _climb_duration: float = 0.0
 var _climb_from: Vector3
 var _climb_to: Vector3
+## First-person hands on the ledge while climbing (local player).
+var _climb_hands: ClimbHands
 
 @onready var head: Node3D = $Head
 @onready var camera: Camera3D = $Head/Camera3D
@@ -120,6 +128,8 @@ var _remote_reloading := false
 @onready var _third_person: Node3D = $ThirdPerson
 @onready var _model: PlayerModel = $ThirdPerson/Model
 @onready var _name_tag: Label3D = $NameTag
+## Teammates' health under their name (built in _ready).
+var _tag_health: Label3D
 @onready var _body_hitbox_shape: CapsuleShape3D = $BodyHitbox/CollisionShape3D.shape
 @onready var _shape: CapsuleShape3D = $CollisionShape3D.shape
 @onready var _collision: CollisionShape3D = $CollisionShape3D
@@ -147,11 +157,24 @@ func _enter_tree() -> void:
 
 func _ready() -> void:
 	is_local = peer_id == multiplayer.get_unique_id() and not NetworkManager.is_dedicated()
+	is_bot = BotManager.is_bot(peer_id)
 	_height = stand_height
 	_apply_height()
 	health.died.connect(_on_died)
+	health.damaged.connect(_on_damaged_voice)
 	_default_regen = health.regen_per_second
 	_name_tag.text = player_name
+	_tag_health = Label3D.new()
+	_tag_health.name = "TagHealth"
+	_tag_health.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	_tag_health.no_depth_test = true
+	_tag_health.fixed_size = true
+	_tag_health.pixel_size = _name_tag.pixel_size
+	_tag_health.font_size = 22
+	_tag_health.outline_size = 6
+	_tag_health.offset = Vector2(0, -34)
+	_tag_health.visible = false
+	_name_tag.add_child(_tag_health)
 	# Built here (not in the scene) but under a fixed name, so its RPC path
 	# is the same on every peer.
 	throwables = Throwables.new()
@@ -180,6 +203,10 @@ func _ready() -> void:
 			weapons[w.data.weapon_id] = w
 			w.unequip()
 	apply_loadout(primary_id, current_slot)
+	if is_bot and multiplayer.is_server():
+		var brain := BotBrain.new()
+		brain.name = "BotBrain"
+		add_child(brain)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -196,6 +223,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		rotate_y(-motion.relative.x * sens)
 		head.rotation.x = clampf(head.rotation.x - motion.relative.y * sens * invert,
 			-deg_to_rad(max_pitch_degrees), deg_to_rad(max_pitch_degrees))
+	elif event.is_action_pressed(&"interact") and not event.is_echo() and not _bomb_action_here() and use_door():
+		pass # opened / closed the door in front
 	elif event.is_action(&"interact") and not event.is_echo():
 		# Plant / defuse in Bomb Defusal (the server checks everything).
 		if Match.mode == GameConfig.Mode.BOMB:
@@ -215,6 +244,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			select_slot(current_slot, true)
 		else:
 			select_slot(_next_slot(current_slot, step))
+	elif event.is_action_pressed(&"inspect"):
+		if current_weapon:
+			current_weapon.start_inspect()
 	elif event.is_action_pressed(&"fire_mode"):
 		if current_weapon:
 			current_weapon.cycle_fire_mode()
@@ -236,7 +268,7 @@ func _process(delta: float) -> void:
 		_pad_look(delta)
 	if not is_local and visible:
 		_model.animate(delta, is_crouching)
-		_update_tag_through_smoke()
+		_update_name_tag()
 
 
 func _physics_process(delta: float) -> void:
@@ -313,7 +345,8 @@ func _physics_process(delta: float) -> void:
 		if absf(lean) > 0.3:
 			speed = minf(speed, walk_speed * 0.7)
 		if current_weapon:
-			speed *= lerpf(1.0, current_weapon.data.ads_move_speed_multiplier, current_weapon.ads_blend)
+			speed *= current_weapon.data.move_speed_multiplier \
+				* lerpf(1.0, current_weapon.data.ads_move_speed_multiplier, current_weapon.ads_blend)
 
 		var target := wish_dir * speed
 		var accel := air_acceleration
@@ -352,6 +385,46 @@ func _physics_process(delta: float) -> void:
 # Public API
 # -----------------------------------------------------------------------------
 
+## Bomb Defusal: F plants / defuses here, so it must not work a door.
+func _bomb_action_here() -> bool:
+	if Match.mode != GameConfig.Mode.BOMB:
+		return false
+	var b := Match.bomb
+	if b.bomb_carrier == peer_id and b.site_at(global_position) != "":
+		return true
+	return b.bomb_state == BombRules.BombState.PLANTED \
+		and global_position.distance_to(b.bomb_position) <= BombRules.DEFUSE_RANGE + 0.5
+
+
+## Interact (F) on the door in front (within Door.USE_RANGE): opens it away
+## from us, or closes it. Returns false if there is no door there.
+func use_door() -> bool:
+	if health.is_dead:
+		return false
+	var from := camera.global_position
+	var q := PhysicsRayQueryParameters3D.create(from, from - camera.global_basis.z * Door.USE_RANGE, 1)
+	var hit := get_world_3d().direct_space_state.intersect_ray(q)
+	var col: Object = hit.get("collider")
+	var door: Door = null
+	if col and col.has_meta(&"breakable") and col.get_meta(&"breakable") is Door:
+		door = col.get_meta(&"breakable")
+	else:
+		# Looking into a doorway (an open door stands aside): the nearest
+		# door we roughly face.
+		var look := -camera.global_basis.z
+		var best := 2.5
+		for d: Door in get_tree().get_nodes_in_group(Door.GROUP):
+			var to := (d.global_position + Vector3.UP * 1.2) - from
+			var dist := to.length()
+			if dist < best and look.dot(to / maxf(dist, 0.01)) > 0.7:
+				best = dist
+				door = d
+	if door == null:
+		return false
+	door.request_toggle(global_position)
+	return true
+
+
 ## Pulls the player up onto a climbable ledge in front (at least
 ## `min_height` high). Returns false if there is none.
 func _try_climb(min_height: float) -> bool:
@@ -371,6 +444,10 @@ func _try_climb(min_height: float) -> bool:
 	if current_weapon and not throwables.is_holding():
 		current_weapon.set_holstered(true)
 	_movement_sound(&"jump", -8.0, 14.0)
+	if is_local:
+		_climb_hands = ClimbHands.new()
+		add_child(_climb_hands)
+		_climb_hands.grab(_climb_to, forward, camera)
 	return true
 
 
@@ -395,6 +472,9 @@ func _update_climb(delta: float) -> void:
 
 
 func _end_climb() -> void:
+	if is_instance_valid(_climb_hands):
+		_climb_hands.release()
+	_climb_hands = null
 	if not is_climbing:
 		return
 	is_climbing = false
@@ -525,6 +605,12 @@ func respawn_at(xform: Transform3D, primary: String, nades: Array = []) -> void:
 	is_sliding = false
 	_fell_reported = false
 	_end_climb()
+	_life += 1
+	_model.reset_pose()
+	camera.rotation.z = 0.0
+	_apply_height()
+	if current_weapon:
+		current_weapon.set_holstered(false)
 	visible = true
 	_set_hitboxes_enabled(true)
 	is_walking = false
@@ -570,22 +656,46 @@ func _update_team_visuals() -> void:
 	var local_id := multiplayer.get_unique_id()
 	var friendly := Match.is_team_mode() and Match.is_friendly(peer_id, local_id)
 	_model.set_team_color(GameConfig.team_color(team))
+	_model.set_look(NetworkManager.look_of(peer_id))
 	_name_tag.no_depth_test = friendly
 	_name_tag.outline_modulate = Color(0.1, 0.25, 0.6, 0.9) if friendly else Color(0.45, 0.05, 0.05, 0.9)
 
 
-## Enemy name tags are hidden through walls by the depth test, but smoke is
-## see-through to it — hide them while a smoke cloud is in the way.
-func _update_tag_through_smoke() -> void:
-	if not get_tree().has_group(SmokeCloud.GROUP):
-		if not _name_tag.visible and not is_local:
-			_name_tag.visible = true
-		return
+## Name over the head (remote players, every frame):
+## • teammates: always, through walls, with a health bar under the name;
+## • enemies: only when the crosshair is on them (within TAG_AIM_DEGREES) or
+##   they are close (TAG_NEAR), never through walls (depth test) or smoke.
+const TAG_AIM_DEGREES := 4.0
+const TAG_NEAR := 6.0
+const TAG_RANGE := 70.0
+
+
+func _update_name_tag() -> void:
 	var viewer := get_viewport().get_camera_3d()
-	if viewer == null or Match.is_friendly(peer_id, multiplayer.get_unique_id()):
-		_name_tag.visible = true
+	if viewer == null or health.is_dead:
+		_name_tag.visible = false
 		return
-	_name_tag.visible = not SmokeCloud.blocks_line(get_tree(), viewer.global_position, _name_tag.global_position)
+	var friendly := Match.is_team_mode() and Match.is_friendly(peer_id, multiplayer.get_unique_id())
+	var to := _name_tag.global_position - viewer.global_position
+	var dist := to.length()
+	var tag_on := friendly
+	if not friendly and dist < TAG_RANGE:
+		var aim := (-viewer.global_basis.z).dot(to / maxf(dist, 0.01))
+		tag_on = dist < TAG_NEAR or aim > cos(deg_to_rad(TAG_AIM_DEGREES))
+		if tag_on and get_tree().has_group(SmokeCloud.GROUP):
+			tag_on = not SmokeCloud.blocks_line(get_tree(), viewer.global_position, _name_tag.global_position)
+	_name_tag.visible = tag_on
+	if not tag_on:
+		return
+	# Fade a little with distance so far tags don't clutter the view.
+	_name_tag.modulate.a = clampf(remap(dist, 30.0, TAG_RANGE, 1.0, 0.45), 0.45, 1.0)
+	_tag_health.visible = friendly
+	if friendly:
+		var hp := clampf(health.current / health.max_health, 0.0, 1.0)
+		var n := ceili(hp * 10.0)
+		_tag_health.text = "▮".repeat(n) + "▯".repeat(10 - n)
+		_tag_health.modulate = Color(0.45, 0.95, 0.5).lerp(Color(1, 0.3, 0.25), 1.0 - hp)
+		_tag_health.modulate.a = _name_tag.modulate.a
 
 
 ## Voice chat indicator on the name tag.
@@ -785,8 +895,53 @@ func _on_died(_source: Node) -> void:
 	velocity = Vector3.ZERO
 	is_sliding = false
 	_set_hitboxes_enabled(false)
-	if not is_local:
+	_name_tag.visible = false
+	if not health.silent_death:
+		_voice_sound(&"death_cry", -3.0)
+	if is_local:
+		_death_cam()
+	elif health.silent_death:
 		visible = false
+	else:
+		# The body falls and stays a while, then it is cleared away.
+		_model.play_death(randi() % 8, health.last_hit_headshot)
+		get_tree().create_timer(CORPSE_TIME).timeout.connect(_clear_corpse.bind(_life))
+
+
+## The player's voice (CharacterLook: pitch, rough or not) grunts when hit
+## (at most every half second) and cries out when killed.
+var _last_grunt := -10.0
+
+
+func _on_damaged_voice(amount: float, _source: Node, _headshot: bool) -> void:
+	var now := Time.get_ticks_msec() / 1000.0
+	if health.is_dead or amount < 5.0 or now - _last_grunt < 0.5:
+		return
+	_last_grunt = now
+	_voice_sound(&"grunt", -6.0)
+
+
+func _voice_sound(sound: StringName, volume_db: float) -> void:
+	var look := _model.get_look()
+	var rough := CharacterLook.voice_rough(look)
+	Audio.play_3d(StringName(String(sound) + ("_rough" if rough else "")), global_position + Vector3.UP * 1.6,
+		volume_db, 30.0, CharacterLook.voice_pitch(look) * randf_range(0.96, 1.04), 6.0)
+
+
+func _clear_corpse(life: int) -> void:
+	if health.is_dead and _life == life:
+		visible = false
+
+
+## Local player: the view drops to the floor and rolls over; the gun goes.
+func _death_cam() -> void:
+	if current_weapon:
+		current_weapon.set_holstered(true)
+	var t := create_tween().set_parallel(true)
+	t.tween_property(head, "position:y", 0.35, 0.7).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	t.tween_property(camera, "rotation:z", deg_to_rad(randf_range(55.0, 75.0) * (1 if randf() < 0.5 else -1)), 0.8) \
+		.set_trans(Tween.TRANS_BOUNCE).set_ease(Tween.EASE_OUT)
+	t.tween_property(head, "rotation:x", deg_to_rad(-12.0), 0.8)
 
 
 ## Q / E held: -1 / 1, shortened when a wall is in the way; 0 while

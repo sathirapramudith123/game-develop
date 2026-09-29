@@ -2,7 +2,7 @@
 
 A multiplayer **First-Person Shooter (FPS)** for desktop (Windows / Linux / macOS), built to **run smoothly on low-end PCs** while still scaling up to great visuals on powerful machines.
 
-> **Status:** 🧪 **v0.9.0 beta** — builds for Windows, Linux, macOS and a Linux dedicated server: FFA, TDM, Bomb Defusal with money and a buy menu; 5 guns + knife and 4 grenade types; 11 maps with a map picker + end-of-match vote; keyboard/mouse **and controller**; Opus voice chat; 3D audio; anti-cheat. v1.0 follows after real-hardware reports and beta feedback.
+> **Status:** 🧪 **v0.9.0 beta** — builds for Windows, Linux, macOS and a Linux dedicated server: FFA, TDM, Bomb Defusal with money, a buy menu and overtime; 6 guns + knife and 4 grenade types, each gun with its own animations; 8 maps with a map picker + end-of-match vote; a character creator; training bots; keyboard/mouse **and controller**; Opus voice chat; 3D audio; anti-cheat. v1.0 follows after real-hardware reports and beta feedback.
 
 ---
 
@@ -43,6 +43,10 @@ A multiplayer **First-Person Shooter (FPS)** for desktop (Windows / Linux / macO
 - 🔫 **Core FPS gameplay** — smooth first-person movement (walk, sprint, crouch, jump, slide, lean, **climb onto crates, cars and low walls**), aim-down-sights, fire modes, recoil & spread, hitscan weapons and a knife.
 - 💣 **Grenades** — HE, Molotov, flashbang and smoke; hold `4` for a **grenade wheel**, and the grenade in hand shows its **flight path and landing spot**.
 - 💰 **Bomb Defusal economy** — money for kills, plants, defuses and rounds; a **buy menu** (`X`) for guns, armour + helmet and grenades; survivors keep their gear.
+- 🧑 **Character creator** — male / female, 15 faces, eyes, mouth, ears, voice, 7 outfits with camouflage and every kit piece (headwear, armour, backpack, gloves, pants, boots); everyone sees your look.
+- 🔧 **Weapon animations** — one system, a profile per gun: sway, bob, equip, per-gun kick, bolt / pump after each shot, reloads (shotgun shell by shell, LMG top cover) and an inspect (`I`) for every gun.
+- 🤖 **Training bots** — 0–15 bots (Easy / Normal / Hard) offline or on your server; they navigate, fight, buy, plant and defuse.
+- 🚪 **Doors and glass** — doors open with `F` and break where they are shot; windows crack, then shatter.
 - 🌐 **Multiplayer** — client/server networking with lag compensation and client-side prediction.
 - 🎮 **Game modes** — Free-for-All, Team Deathmatch, Bomb Defusal (rounds, plant/defuse, money + buy menu), offline Practice.
 - ⚙️ **Graphics presets** — Low / Medium / High / Ultra + auto-detect on first launch.
@@ -336,7 +340,7 @@ New weapons = new `WeaponData` `.tres` in `resources/weapons/` + a viewmodel sce
 godot --headless --path . res://tests/smoke_test.tscn
 ```
 
-The smoke test drives the real player through the test map (walk, sprint, jump, crouch, slide, ADS, shooting, reload, ramp, stairs, pause, fall death + respawn, lag-compensation maths, voice codec quality, resampler, proximity voice rules, mic-test loopback, weapon switching, pistol semi-auto, shotgun pellets, sniper scope + one-shot, loadout on respawn, friendly fire, TDM scoring + match end, a full offline Bomb Defusal match — freeze, carry/drop/pickup, plant, defuse, explosion, elimination, halftime swap, money and the buy menu: prices, limits, rewards, buy time and zone, gear kept by survivors — the settings screen (custom graphics, rebinding + swap + persistence, the new key really jumps and the old one doesn't, toggle aim/crouch, crosshair, reset) and the end-of-match map vote, walking the ramps/bridges/gangways of every map, the Kasbah terrace, doors and covered corridor, routes through Factory, Office, Subway (platforms, track beds, the train) and Train Yard, the radar outline and location names, first-person arms and the reload animations, and spawns + bomb sites on all maps) and exits with code `0` when all checks pass. For the multiplayer test see *Testing multiplayer locally* below.
+The smoke test drives the real player through the test map (walk, sprint, jump, crouch, slide, ADS, shooting, reload, ramp, stairs, pause, fall death + respawn, lag-compensation maths, voice codec quality, resampler, proximity voice rules, mic-test loopback, weapon switching, pistol semi-auto, shotgun pellets, sniper scope + one-shot, loadout on respawn, friendly fire, TDM scoring + match end, a full offline Bomb Defusal match — freeze, carry/drop/pickup, plant, defuse, explosion, elimination, halftime swap, money and the buy menu: prices, limits, rewards, buy time and zone, gear kept by survivors — the settings screen (custom graphics, rebinding + swap + persistence, the new key really jumps and the old one doesn't, toggle aim/crouch, crosshair, reset) and the end-of-match map vote, walking the ramps, stairs and doors of every map (Docks: through the warehouse, onto A Long, the quay edge), the Oasis terrace, doors and covered corridor, routes through Factory, Office, Subway (A / B Long into the sites, through the trains, out of a track bed, the CT and T routes) and Train Yard, the radar outline and location names, first-person arms and the reload animations, the weapon animation profiles (equip raise, sway, bob, bolt / pump, shell-by-shell shotgun reload, the LMG's cover, per-gun inspects, arms in the outfit's colours), the win / lose / draw result, character looks (clamping, meshes, camouflage, the Character screen, bots' looks, voices), doors and glass, training bots, and spawns + bomb sites on all maps) and exits with code `0` when all checks pass. For the multiplayer test see *Testing multiplayer locally* below.
 
 ### Phase 4 — multiplayer
 
@@ -352,10 +356,10 @@ The smoke test drives the real player through the test map (walk, sprint, jump, 
 - **Internet:** forward **UDP 7777** on your router to the host PC, or use a VPN such as Tailscale / ZeroTier / Radmin VPN.
 - **Dedicated server** (no graphics, very low CPU/RAM — good for a cheap VPS):
   ```bash
-  ./FPSGame.x86_64 --headless -- --server --port 7777 --max-players 16 --mode tdm --map warehouse
+  ./FPSGame.x86_64 --headless -- --server --port 7777 --max-players 16 --mode tdm --map docks
   # from source:
-  godot --headless --path . -- --server --port 7777 --mode ffa --map courtyard
-  # --mode: ffa | tdm | bomb      --map: test_map | warehouse | courtyard | rooftops | docks | bunker
+  godot --headless --path . -- --server --port 7777 --mode ffa --map oasis
+  # --mode: ffa | tdm | bomb      --map: test_map | docks | bunker | oasis | factory | office | subway | trainyard
   ```
 
 **How it works**
@@ -383,14 +387,15 @@ Everything goes through the **`Audio`** autoload (`scripts/audio/audio_manager.g
 
 | Feature | How it works |
 |---------|--------------|
-| **Gunfire** | Each weapon has its own shot (AR-7, V-10, M-12, LR-50, P-9); heard up to 150 m (sniper 300 m); distant shots lose their highs |
+| **Gunfire** | Each weapon has its own shot (AR-7, V-10, M-12, LR-50, K-100, P-9); heard up to 150 m (sniper 300 m); distant shots lose their highs |
 | **Footsteps** | One step per stride: walking normal, **sprinting loud (40 m)**, **crouch-walking nearly silent (8 m)** — also for other players, from their movement. Jump, landing (louder the harder you land) and slide sounds |
-| **Reload & handling** | Mag out → mag in → bolt, timed to the reload; dry fire; weapon switch |
+| **Reload & handling** | Each gun's own cues along the reload (mag out → mag in → bolt; shotgun: a click per shell, then the pump; LMG: cover open → box out → box in → cover shut → charge); the sniper's bolt and the shotgun's pump after each shot; dry fire; weapon switch |
 | **Bullets** | Impact sound where bullets hit; enemy bullets flying within 3 m of your head **whiz** past |
 | **Feedback** | Hit marker, headshot "ding", kill confirm (can be turned off), hurt thump when you take damage |
 | **Occlusion** | A ray from your ears to each sound: if a wall is in between, the sound goes to the `SFXOccluded` bus (low-pass + quieter). Long sounds re-check while they play (High quality) |
-| **Reverb zones** | `Area3D`s on physics layer 7 (`audio_zone`) send indoor sounds to `ReverbRoom` or `ReverbHall`: Warehouse hall + drier offices, Courtyard buildings, Bunker rooms, reactor hall and tunnel. Add one in `tools/greybox.py` with `m.reverb(pos, size, "room"/"hall", amount)` |
-| **Music** | Menu theme (calm, A minor) and a quiet tense drone in matches (can be turned off); cross-fades between them; results screen plays a **win or lose sting**. Bomb Defusal: round start, bomb planted, defused, round won/lost stings |
+| **Reverb zones** | `Area3D`s on physics layer 7 (`audio_zone`) send indoor sounds to `ReverbRoom` or `ReverbHall`: the Docks warehouse, Bunker rooms, reactor hall and tunnel. Add one in `tools/greybox.py` with `m.reverb(pos, size, "room"/"hall", amount)` |
+| **Music** | Menu theme (calm, A minor) and a quiet tense drone in matches (can be turned off); cross-fades between them. Match end: a **brass fanfare** with timpani and cymbals when you win, a slow falling **defeat** theme when you lose, a **draw** sting (also when the match ends on time). Bomb Defusal: round start, bomb planted, defused, round won/lost stings |
+| **Player voices** | A grunt when hit, a cry when killed, pitched by the character's voice (normal, deep, rough, high, young…) and body |
 | **UI** | Every button clicks and ticks on hover |
 | **Voices** | Pooled players — Low: 16 at once, High: 40; when all are busy the oldest is reused. Sounds out of range aren't played at all. Nothing plays on a dedicated server |
 
@@ -400,8 +405,8 @@ Everything goes through the **`Audio`** autoload (`scripts/audio/audio_manager.g
 
 | Put the file in | Names |
 |-----------------|-------|
-| `assets/audio/sfx/` | `fire_rifle` `fire_smg` `fire_shotgun` `fire_sniper` `fire_pistol` `dry_fire` `mag_out` `mag_in` `bolt` `equip` `step1`–`step4` `land` `jump` `slide` `impact` `whiz` `hurt` `bomb_beep` `explosion` |
-| `assets/audio/ui/` | `hitmarker` `headshot` `kill` `ui_click` `ui_hover` `bomb_planted` `bomb_defused` `round_start` `round_win` `round_lose` `match_win` `match_lose` |
+| `assets/audio/sfx/` | `fire_rifle` `fire_smg` `fire_shotgun` `fire_sniper` `fire_pistol` `fire_lmg` `dry_fire` `mag_out` `mag_in` `bolt` `shell_in` `pump` `cover_open` `cover_close` `grunt` `grunt_rough` `death_cry` `death_cry_rough` `equip` `step1`–`step4` `land` `jump` `slide` `impact` `whiz` `hurt` `bomb_beep` `explosion` |
+| `assets/audio/ui/` | `hitmarker` `headshot` `kill` `ui_click` `ui_hover` `bomb_planted` `bomb_defused` `round_start` `round_win` `round_lose` `match_win` `match_lose` `match_draw` |
 | `assets/audio/music/` | `menu` `match` (enable *Loop* in the import settings) |
 
 Formats: `.ogg` (music, long sounds), `.wav` (short sounds) or `.mp3`. Keep mono for 3D sounds. Audio files go through Git LFS, and their license goes in `docs/CREDITS.md`.
@@ -458,7 +463,7 @@ Measured on the software renderer (Low, 12 bots, back-to-back runs): average **3
 
 | What | How |
 |------|-----|
-| **Kasbah map** | `kasbah()` in `tools/greybox.py`: a 3-lane bomb map, original layout. New generator helpers: `cyl()` (pots, barrels, sacks, wells), `beam()` (cables, palm fronds, poles), `blocker()` (one invisible collider for a pile of sandbags), rotated boxes (`pitch`/`roll`), facades with windows/shutters/doors/balconies, market stalls, palms, and `callout()` boxes that name places |
+| **Oasis map** (was Kasbah) | `oasis()` in `tools/greybox.py`: a 3-lane bomb map, original layout. New generator helpers: `cyl()` (pots, barrels, sacks, wells), `beam()` (cables, palm fronds, poles), `blocker()` (one invisible collider for a pile of sandbags), rotated boxes (`pitch`/`roll`), facades with windows/shutters/doors/balconies, market stalls, palms, and `callout()` boxes that name places |
 | **Desert materials** | New kinds in the level shader: sandstone blocks (running bond, per-block tint), weathered plaster (bricks show through patches, water stains), irregular flagstones (cellular), striped cloth. Seams stay on Low; the noise needs *Surface detail* |
 | **Radar** | `scripts/ui/minimap.gd`: built once from the map's collision shapes (floor light, cover mid, walls dark; ceilings ignored), so every map gets one. Rotates with the view; teammates, bomb sites, carrier ring, dropped/planted bomb. `location()` reads the map's `Callouts` (falls back to "Bombsite A/B") |
 | **Top bar** | `scripts/ui/top_bar.gd`: clock (red after the plant), round number, team scores and up to 5 player cards per team (+N), dead players greyed out, you outlined in yellow |
@@ -474,13 +479,13 @@ Measured on the software renderer (Low, 12 bots, back-to-back runs): average **3
 | **Multi-level room maps** | `_rooms(m, rooms, trim, windows)` in `tools/greybox.py`: list rooms as rectangles on a 1 m grid with a floor height (upper, ground or lower level) and an optional ceiling; walls go wherever a room meets empty space, lintels where ceilings step, floors are solid blocks. A 1 m gap between rooms is a wall; a small room across it is a doorway. Used for Bunker and Train Yard. The radar draws any `Floor*` body as floor at every level and skips `Ceiling*` |
 | **Wall signs** | `m.sign(pos, face, "A", toward=(x, z))` in `tools/greybox.py`: a painted Label3D letter + arrow boxes pointing towards a place; plus `_rug()`, `_tower()`, fruit crates on stalls |
 
-Draw calls at the worst view on Low (after batching): Courtyard ~120, Kasbah ~185, Factory ~190, Office / Train Yard ~205, Subway ~235 — still well within what the minimum-spec GPUs handle.
+Draw calls at the worst view on Low (after batching): Oasis ~185, Factory ~190, Office / Train Yard ~205, Subway ~235 — still well within what the minimum-spec GPUs handle.
 
 ### Phase 7b — real-hardware tuning
 
 The presets can only be tuned on real PCs, so the game measures itself and players send the results.
 
-**1. Players run the full hardware test** — *Settings → Graphics → Full hardware test* (≈5 min; don't touch the mouse). It plays Warehouse and Courtyard with 12 bots and measures:
+**1. Players run the full hardware test** — *Settings → Graphics → Full hardware test* (≈5 min; don't touch the mouse). It plays Office and Docks with 12 bots and measures:
 
 | Stage | Measured |
 |-------|----------|
@@ -520,7 +525,7 @@ Preset files themselves are only *suggested* — review and edit `resources/sett
 | **Display** | Window mode, window size, V-Sync, FPS limit, field of view, brightness, performance overlay |
 | **Audio** | Master, music, effects, voice chat and interface volume |
 | **Voice** | On/off, push-to-talk or voice activation, microphone, mic volume, activation level, live mic meter, noise suppression, proximity chat, "hear myself" test |
-| **Controls** | Mouse and ADS sensitivity, invert Y, **hold or toggle** for aim and crouch, **key bindings** for 31 actions (click → press a key or mouse button; a key already in use swaps with the other action; `Esc` cancels; *Reset key bindings*) |
+| **Controls** | Mouse and ADS sensitivity, invert Y, **hold or toggle** for aim and crouch, **key bindings** for 32 actions (click → press a key or mouse button; a key already in use swaps with the other action; `Esc` cancels; *Reset key bindings*) |
 | **Gameplay** | Player name, crosshair colour / size / centre dot with live preview, grenade throw path on/off |
 
 *Reset tab* restores that tab's defaults. Settings live in `user://settings.cfg` (key bindings in its `[bindings]` section, stored by physical key position so they work on any keyboard layout). Tests use a separate `settings_test.cfg`, so running them never changes your settings. `Esc`/Pause stays fixed so you can always reach the menu.
@@ -536,13 +541,14 @@ Preset files themselves are only *suggested* — review and edit `resources/sett
 | **Team Deathmatch** | Blue vs Red, auto-balanced on join, **friendly fire off** (bullets pass through teammates), first team to **50** kills or most after **10 min** |
 | **Bomb Defusal** | Rounds, first team to **5 round wins**; sides swap after round 4. See below |
 
-Match flow: the server runs the clock and score → **results screen** (winner + scoreboard, 10 s) → **map vote**: the results screen offers 3 maps (the next one in the rotation + 2 random maps that support the mode); press **`1` / `2` / `3`** to vote (you can change your vote). The map with the most votes wins; ties and no votes keep the normal rotation (Test Range → Warehouse → Courtyard → Rooftops → Docks → Bunker → Kasbah → Factory → Office → Subway → Train Yard → …). Everyone stays connected. Players get **1.5 s spawn protection**, and respawn at the spawn point furthest from living enemies (team spawns in TDM). Enemy name tags are hidden behind walls; teammates' are always visible. In TDM, *team* voice (`V`) only reaches your team; use proximity (`B`) to talk to nearby enemies.
+Match flow: the server runs the clock and score → **results screen** (winner + scoreboard, 10 s) → **map vote**: the results screen offers 3 maps (the next one in the rotation + 2 random maps that support the mode); press **`1` / `2` / `3`** to vote (you can change your vote). The map with the most votes wins; ties and no votes keep the normal rotation (Test Range → Docks → Bunker → Oasis → Factory → Office → Subway → Train Yard → …). Everyone stays connected. Players get **1.5 s spawn protection**, and respawn at the spawn point furthest from living enemies (team spawns in TDM). Enemy name tags are hidden behind walls; teammates' are always visible. In TDM, *team* voice (`V`) only reaches your team; use proximity (`B`) to talk to nearby enemies.
 
 **Bomb Defusal**
 
 | Rule | Detail |
 |------|--------|
 | Sides | Red attacks first, Blue defends; **sides swap at halftime** (after `rounds to win − 1` rounds) |
+| Overtime | Regulation is 2 × (rounds to win − 1) rounds (8 by default). Level at the end (4–4) → **overtime**: halves of 3 rounds, sides swap at each, everyone starts them with **$10,000**; first to 4 overtime round wins takes the match (level again → another overtime) |
 | Round | **5 s freeze** (can't move or shoot — buy with `X`) → **1:45** to plant → bomb timer **40 s** → 5 s round result |
 | Bomb | Given to a random attacker when the round goes live; carried on their back (visible to others); **dropped where the carrier dies**, any attacker can walk over it to pick it up |
 | Plant | Carrier stands still inside site **A** or **B** (orange floor + big letter) and **holds `F` for 3 s** |
@@ -551,13 +557,24 @@ Match flow: the server runs the clock and score → **results screen** (winner +
 | Death | **No respawn during a round** — you spectate living teammates (`Shoot` = next); no health regen; next round revives everyone with full ammo — survivors keep their gear, the dead start with pistol + knife |
 | Joining | Freeze time waits until both teams have a player; joining mid-round = spectate until the next round |
 
+**Character creator** — main menu → **Character ▸**: a turning 3D preview of your soldier (drag to turn, *Face close-up*) and a row per option, each stepped with ◀ / ▶:
+
+| Group | Options |
+|-------|---------|
+| Body and face | **Body** male / female (slimmer shoulders and waist, a smaller head) · **Face** 8 male, 7 female (skin tone, hair colour and style — buzz, short, side part, slicked, ponytail, bun, long, bob, braid — beard, stubble or moustache) · **Eyes** 9 colours · **Mouth** normal, smirk, grim, open, shout, clench, neutral, smile · **Ears** small, standard, large, pointed, rounded, folded, scarred, earring · **Voice** normal, deep, rough, calm, high, soft, angry, young (your grunt when hit and cry when killed; *Hear voice* plays it) |
+| Clothing kit | **Outfit** Tactical, Military (multicam), Urban, Desert, Winter, Stealth, Casual — picking one dresses its whole kit, then change any piece: **Headwear** none, cap, helmet, boonie, beanie, balaclava, headset, tactical helmet (NVG mount) · **Torso** plate carriers, woodland chest rig, light vest, coyote heavy armour, urban / winter carriers · **Backpack** none, assault pack, woodland / desert rucks, daypack, sling bag, winter pack · **Gloves** 7 · **Pants** black cargo, woodland, khaki, jeans, desert / urban / winter camo · **Boots** 6 |
+
+*Random* rolls a look, *Done* saves it (`SettingsManager.character`). The look travels to the server when you join (roster `look`, 13 small numbers) and everyone sees it; bots get a random one (every third bot is a woman). The team colour stays on the shoulder pads, armbands, a chest patch and the helmet band, so teams are told apart whatever people wear. Built in code like the rest (`scripts/player/character_look.gd` = the options, `character_mesh.gd` = the meshes, cached per look; camouflage is painted by `assets/shaders/model.gdshader` from 3D noise, no textures).
+
+**Training bots** (`scripts/bots/`) — set **Bots** (0–15) and the skill (**Easy / Normal / Hard**) in the main menu. *Play Offline* then plays the chosen mode (FFA, TDM or Bomb Defusal) against them; with 0 bots it is Practice as before. Hosting adds them to your server (they balance the teams), and the host can add / remove bots in the `Esc` menu. A dedicated server takes `--bots N --bot-skill 0-2`. Bots are real players in the roster (`BOT Nuwan`…, "BOT" in the ping column) run by the server: they walk a navigation mesh baked from the map when it loads (< 0.1 s), see you only with a clear line (not through walls or smoke), react after a moment, turn at a limited speed with an aim error that shrinks, fire in bursts while strafing, turn round when shot, open doors in their way, get unstuck, reload, and in Bomb Defusal buy a gun and armour, take the bomb to a site and plant it, hold sites, defuse and guard the bomb. Skill sets reaction time, turn speed, aim error, headshot chance and sight range.
+
 **Money and the buy menu** (`scripts/core/economy.gd`, `scripts/ui/buy_menu.gd`) — Bomb Defusal only; the other modes keep free loadouts.
 
 | | |
 |---|---|
 | Start | **$800** each half (halftime resets money and gear), max **$16,000**. Everyone starts with the pistol and knife |
 | Buy | Press **`X`** near your side's spawn during the freeze time and the first **20 s** of the round (the HUD shows `X Buy (18s)`). Click an item; the menu closes when buy time ends or you leave the spawn |
-| Guns | AR-7 **$2700**, V-10 SMG **$1250**, M-12 Shotgun **$1100**, LR-50 Sniper **$4750** (a new gun replaces the old primary) |
+| Guns | AR-7 **$2700**, V-10 SMG **$1250**, M-12 Shotgun **$1100**, LR-50 Sniper **$4750**, K-100 LMG **$5200** (a new gun replaces the old primary) |
 | Armour | Kevlar **$650**, Kevlar + Helmet **$1000** (helmet alone **$350** with a full vest). Without a helmet, head hits ignore armour |
 | Grenades | HE **$300**, Flash **$200** (max 2), Smoke **$300**, Molotov **$400** — 1 of each other kind, 4 in total |
 | Round win | **$3250**, or **$3500** by exploding / defusing the bomb |
@@ -576,9 +593,23 @@ Everything is server-authoritative (`scripts/core/bomb_rules.gd`): clients only 
 |--------|------|--------|------|-------------|-----|-----|-------|
 | AR-7 | Assault rifle | 24 | ×2 | 78 % | 650 | 30 | All-rounder |
 | V-10 | SMG | 17 | ×1.6 | 60 % | 900 | 32 | Fast, accurate while moving, short range |
-| M-12 | Shotgun | 9 × 13 | ×1.5 | 45 % | 70 | 6 | Pellets in one packet, deadly up close |
+| M-12 | Shotgun | 9 × 13 | ×1.5 | 45 % | 70 | 6 | Pellets in one packet, deadly up close; **loads shell by shell** (fire to stop reloading), pump after each shot |
 | LR-50 | Sniper | 110 | ×2 | 95 % | 45 | 5 | One-shot chest/stomach kill, **scope overlay** (4× zoom) |
+| K-100 | LMG | 26 | ×2 | 80 % | 720 | 100 | Belt-fed box, 5 s reload (cover up, box swap, cover down), 14 % slower to walk with |
 | P-9 | Pistol | 30 | ×2 | 50 % | 400 (semi) | 12 | Secondary for everyone |
+
+**Weapon animations** (`scripts/weapons/weapon_anim.gd`) — one animation system for every gun, each with its own profile: idle sway (breathing), walk / run bob, the gun lagging a little behind the mouse, an equip raise, fire kick (back, up, rotation) and how fast it settles, the reload tilt (pistol 4° … sniper 10°) and hand speed, sounds along the reload, and its own inspect (`I`):
+
+| Gun | Feel | Fire | Reload | Inspect |
+|-----|------|------|--------|---------|
+| P-9 pistol | light, fast hands | small kick, quick recovery | mag out → mag in → slide | quick turns, press-check |
+| V-10 SMG | close, steady | fast, controlled | quick mag change, charging handle | the magazine dropped and checked |
+| AR-7 rifle | firm, slight sway | stronger kick | mag out → in → charging handle | turned over, handle eased back |
+| M-12 shotgun | heavy | big kick, **pump** after each shot | **shell by shell**, pump | a shell held up |
+| LR-50 sniper | steady, minimal sway | heavy kick, **bolt** worked by the right hand | mag change, bolt | raised to look along the scope |
+| K-100 LMG | heavy, slow hands, big bob | sustained | cover up, box out / in, cover down, charge | cover lifted to show the belt |
+
+The viewmodel is four pieces (gun, magazine, right arm, left arm; the LMG adds its top cover). First-person gloves and sleeves follow your character's outfit.
 
 **Damage model** — `damage = base × distance falloff × hit zone`, then armour:
 
@@ -611,15 +642,12 @@ All stats live in `resources/weapons/*.tres` (edit in the Inspector). Add a weap
 | Map | Style | Features |
 |-----|-------|----------|
 | Test Range | Shooting range | Targets, ramp, stairs, crouch tunnel |
-| Warehouse | Close quarters | Shelf aisles, crate stacks, raised catwalk with ramps, two offices |
-| Courtyard | Outdoor, mid-range | Fountain plaza, pillars, low walls, two 2-storey buildings with roof access |
-| Rooftops | Vertical, long range | Four flat roofs linked by two bridges, ramps up from the street, parked cars as cover, sites A/B in the street |
-| Docks | Outdoor, lanes | Container stacks on a quay, a moored ship (Red spawns on its deck) with two gangways, a crane |
+| Docks | Port, 3 lanes, bomb defusal | Mid runs through the Port Authority warehouse (racks, a forklift); A (north) is the container yard off its north door under a gantry crane — the red container with the A — reached by T along A Long, a raised loading platform with a rail track; B (south) is on the quay beside the moored ship and two ship-to-shore cranes — the blue container with the B — reached along B Long, the quay; T spawn is the gate road with a walkway over it, CT spawn a small harbour office with a pickup; sunset over the water |
 | Bunker | Indoor, 3 lanes, bomb defusal | Underground base on three levels: A Long rises to an upper corridor and a balcony over A (north); B is one level down (south), reached by the B Long ramp and the rock-walled Tunnel (B2) or the stairs from Mid; Mid is a tall hall round a red-lit reactor with a catwalk; Storage / Utility flank; T west, CT east |
-| Kasbah | Desert town, bomb defusal | Three lanes (A Long, Mid with doors, covered B Apartments), Connector and Short; A is a raised terrace, B a courtyard round a well |
+| Oasis | Desert town, bomb defusal | Three lanes (A Long, Mid with doors, covered B Apartments), Connector and Short; A is a raised terrace, B a courtyard round a well |
 | Factory | Industrial, 3 lanes | A under a gantry crane next to two silos with a flat roof overlooking it; B in a walled yard; West Lane past the Warehouse, Mid with a catwalk under the Lanka Steel building, Tunnels to Lower Mid, the Rail Yard along the east; painted T / CT spawns, coconut palms, a Sri Lankan flag |
 | Office | Indoor, two floors | Lobby with reception, open-plan office (A), conference + server room (B), break room and storage under a mezzanine reached by two stairs, side alleys |
-| Subway | Underground | Two side platforms and an island, track beds to drop into (climb out at the ends), a two-car train to walk through, ticket halls with turnstiles |
+| Subway | Underground station, 3 lanes, bomb defusal | Riverside station: three platforms run from T spawn (east, the Exit stairs) to CT spawn (west, the ticket hall with turnstiles) — A Long (upper, north), Mid (the central island round a stairwell) and B Long (lower, south) — with metro trains parked on the tracks between them: walk through their open doors or drop into a track bed and jump out; A (north) and B (south) are platforms beside a terminating train, reached through two openings from A / B Long and by CT from the ticket hall; tunnel mouths with red signals, tiled pillars, equipment cases for cover |
 | Train Yard | Outdoor, 3 lanes, bomb defusal | Mid is the rail yard: freight cars and a locomotive on three tracks under a gantry crane, the C1 warehouse along its side; A is inside a warehouse on a raised floor, reached along the A Long loading dock (upper) or A Main; B is a lower yard at the end of the B Long rail cut or down the B stairs; a water tower on the CT side; T west, CT east |
 
 **Map selection screen** — main menu → **Map: … ▸** opens a grid of map cards with a live top-down **preview** (rendered once from the real map and cached), players, style, supported modes and a description. Maps without bomb sites are greyed out in Bomb Defusal. The choice is saved in your settings. Map metadata lives in `GameConfig.MAPS` (`scripts/core/game_config.gd`); the screen is `scenes/ui/map_select.tscn` + `scripts/ui/map_select.gd`, previews come from `scripts/ui/map_preview.gd`.
@@ -632,7 +660,7 @@ All maps except the Test Range are generated by **`tools/greybox.py`** (boxes, r
 
 ### Testing multiplayer locally
 
-- **Automated:** `tools/run_net_test.sh /path/to/godot` runs three host + client pairs on localhost. First, it plays a **Team Deathmatch** round: teams auto-balance, the client walks, both talk over **proximity voice** (test tones must arrive at the right frequency, speaking indicators on/off), the client kills the host, the score limit ends the match on both sides, the server **rotates to Warehouse**, both players respawn there, and the client disconnects cleanly. A second pair then plays **Bomb Defusal** with real key presses: the client buys a vest in the buy menu, walks to site B and plants, the host walks over and defuses (Blue 1–0), the client buys an SMG with its round money and eliminates the host (1–1), keeps the SMG, then plants again and the bomb explodes — Red wins 2–1 on both sides. A third pair is a **hacked client** that fires at the legal rate but never reloads: the server accepts exactly one magazine (30 hits) and kicks it, and the kick reason appears in its main menu.
+- **Automated:** `tools/run_net_test.sh /path/to/godot` runs three host + client pairs on localhost. First, it plays a **Team Deathmatch** round: teams auto-balance, the client walks, both talk over **proximity voice** (test tones must arrive at the right frequency, speaking indicators on/off), the client kills the host, the score limit ends the match on both sides, the server **follows the map vote** to the next map, both players respawn there, and the client disconnects cleanly. A second pair then plays **Bomb Defusal** with real key presses: the client buys a vest in the buy menu, walks to site B and plants, the host walks over and defuses (Blue 1–0), the client buys an SMG with its round money and eliminates the host (1–1), keeps the SMG, then plants again and the bomb explodes — Red wins 2–1 on both sides. A third pair is a **hacked client** that fires at the legal rate but never reloads: the server accepts exactly one magazine (30 hits) and kicks it, and the kick reason appears in its main menu.
 - **By hand:** in the Godot editor use **Debug → Customize Run Instances…** → 2–3 instances, press **F5**, then *Host* in one window and *Join* `127.0.0.1` in the others.
 
 ---
@@ -664,14 +692,14 @@ git tag v0.9.0-beta && git push origin v0.9.0-beta
 
 **Code signing** — the Release workflow signs the Windows exe, Opus DLL and installer (Azure Trusted Signing or a `.pfx`) and signs + notarizes the macOS app as soon as the certificates are added as GitHub secrets; until then builds are unsigned (Windows: *More info → Run anyway*, macOS: right-click → *Open*). Costs and step-by-step: [`docs/SIGNING.md`](docs/SIGNING.md).
 
-**Dedicated server** — [`server/README.md`](server/README.md): `./run_server.sh --mode tdm --map warehouse` or Docker (`server/Dockerfile`, `server/docker-compose.yml`). Measured: ~96 MB RAM and ~8 % of one CPU core with 4 players.
+**Dedicated server** — [`server/README.md`](server/README.md): `./run_server.sh --mode tdm --map docks` or Docker (`server/Dockerfile`, `server/docker-compose.yml`). Measured: ~96 MB RAM and ~8 % of one CPU core with 4 players.
 
 **Command line**
 
 | Command | Does |
 |---------|------|
 | `FPSGame -- --connect 1.2.3.4:7777 --name Bob` | join a server directly (shortcuts, server lists) |
-| `FPSGame-server.x86_64 --port 7777 --mode bomb --map courtyard` | dedicated server (options also work after `--`) |
+| `FPSGame-server.x86_64 --port 7777 --mode bomb --map oasis` | dedicated server (options also work after `--`) |
 | `FPSGame -- --benchmark --preset low --quit` | built-in benchmark |
 
 > `builds/` and `dist/` are git-ignored — builds are shared through GitHub Releases.
@@ -696,8 +724,9 @@ git tag v0.9.0-beta && git push origin v0.9.0-beta
 | **Grenades** | **hold `4`** for the grenade wheel — move the mouse (or right stick) towards one and let go; a quick tap takes the next type. Left click throws, right click lobs it short; while one is in hand its **flight path and landing ring** are drawn (Settings → Gameplay to turn off). `1`–`3` or the mouse wheel put it away · `G` quick-throws the HE |
 | Reload | `R` |
 | Fire / aim down sights | `Left Mouse` / `Right Mouse` |
+| **Inspect weapon** | `I` — the gun turns to show each side (the knife flips); firing, aiming or reloading cancels it |
 | **Switch fire mode** | `B` — AR-7: auto / 3-round burst / semi, V-10: auto / semi (shown next to the weapon name) |
-| Use / pick up / plant / defuse (hold) | `F` |
+| Use / open doors / plant / defuse (hold) | `F` — looking at a door opens it away from you (or closes it); doors break where they are shot, windows crack then shatter |
 | **Map** | `M` — the whole level, north up, with area names |
 | Chat / team chat | `Y` / `T` |
 | Voice chat (team) / (proximity) | hold `U` / `V` |
@@ -787,6 +816,7 @@ The `.gitignore` already excludes engine caches (`.godot/`), builds, logs, secre
 - [x] **Concept-art pass (code only):** armour, health/armour/ammo HUD, faces in the top bar, map banner, painted A/B signs, rugs, fruit stalls, barrels, towers
 - [x] **Maps + CS-style HUD:** Kasbah, Factory, Office, Subway and Train Yard; radar with location names, top bar with player cards; first-person hands, new sniper model; reload animations in first and third person
 - [x] **Gameplay update:** grenades (HE, Molotov, flash, smoke), PUBG-style key layout (lean, walk, knife, grenade slot, fire modes, big map, scope zoom), Bunker + Train Yard rebuilt, grippier movement, gun pulls back at walls, Bomb Defusal money + buy menu, climbing, grenade wheel + throw path
+- [x] **Feel update:** doors and glass, death animation, climbing hands, gun inspect, overtime, name tags, training bots, Docks and Subway rebuilt, character creator, weapon animation profiles, shell-by-shell shotgun, K-100 LMG, win / lose fanfares, editor warnings cleared
 - [ ] **v1.0:** beta feedback, presets tuned from hardware reports (Phase 7b), real art (CC0 packs or an artist), certificates for signing
 
 ---
