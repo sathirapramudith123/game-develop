@@ -56,6 +56,7 @@ func _run() -> void:
 	await _test_doors_and_glass()
 	await _test_bots()
 	await _test_characters()
+	await _test_realistic_soldier()
 	_test_hardware_report()
 
 	print("\n%s — %d failure(s)" % ["PASSED" if _failures == 0 else "FAILED", _failures])
@@ -701,6 +702,15 @@ func _test_weapon_switching() -> void:
 	_tap(&"weapon_1")
 	await _frames(3)
 	_check(_player.current_weapon.data.weapon_id == "rifle", "key 1 switches back")
+	var hud: Hud = _level.hud
+	var tabs := hud._slot_boxes
+	_check(tabs.modulate.a > 0.9 and tabs.get_child_count() == 4 and hud._last_slot_key == 1,
+		"HUD: switching shows the 4 slot tabs, the rifle's lit")
+	await get_tree().create_timer(Hud.SLOT_TABS_TIME + 0.6).timeout
+	_check(tabs.modulate.a < 0.05, "HUD: the slot tabs fade out again")
+	_check((hud.get_node(^"HealthPanel") as PanelContainer).get_theme_stylebox(&"panel") is SlantStyle
+		and (hud.get_node(^"AmmoPanel") as PanelContainer).get_theme_stylebox(&"panel") is SlantStyle,
+		"HUD: tactical corner strips for the player card and the weapon")
 
 
 func _test_shotgun_and_sniper() -> void:
@@ -829,16 +839,18 @@ func _test_weapon_animations() -> void:
 	_check(Economy.ITEMS.has("lmg") and "lmg" in GameConfig.PRIMARY_WEAPONS, "LMG: in the buy menu and the loadout list")
 	w.ammo_in_magazine = 40
 	w.reload()
-	var cover := w.get_node(^"Cover") as Node3D
+	# (The real M249's cover is part of its model: no separate Cover then.)
+	var cover := w.get_node_or_null(^"Cover") as Node3D
 	var lifted := 0.0
 	var mag_low := 0.0
 	for i in int(w.data.reload_time * 60.0) + 20:
 		await _frames(1)
-		lifted = minf(lifted, cover.rotation.x)
+		if cover:
+			lifted = minf(lifted, cover.rotation.x)
 		mag_low = minf(mag_low, (w.get_node(^"Magazine") as Node3D).position.y)
-	_check(lifted < -0.9 and mag_low < -0.2 and w.ammo_in_magazine == 100,
+	_check((cover == null or lifted < -0.9) and mag_low < -0.2 and w.ammo_in_magazine == 100,
 		"LMG reload: cover up (%.2f), box out (%.2f), belt in, cover shut" % [lifted, mag_low])
-	_check(absf(cover.rotation.x) < 0.1, "LMG: the cover is shut again")
+	_check(cover == null or absf(cover.rotation.x) < 0.1, "LMG: the cover is shut again")
 
 	# Inspects: SMG checks its magazine, the shotgun shows a shell, the LMG lifts its cover.
 	_player.apply_loadout("smg")
@@ -864,10 +876,12 @@ func _test_weapon_animations() -> void:
 	w = _player.current_weapon
 	w.start_inspect()
 	lifted = 0.0
+	cover = w.get_node_or_null(^"Cover") as Node3D
 	for i in 90:
 		await _frames(1)
-		lifted = minf(lifted, (w.get_node(^"Cover") as Node3D).rotation.x)
-	_check(lifted < -0.8, "inspect (LMG): the cover is lifted to show the belt")
+		if cover:
+			lifted = minf(lifted, cover.rotation.x)
+	_check(cover == null or lifted < -0.8, "inspect (LMG): the cover is lifted to show the belt")
 
 	# First-person arms wear the outfit.
 	var saved: Array = NetworkManager.roster[1].look
@@ -876,8 +890,73 @@ func _test_weapon_animations() -> void:
 	_player.apply_loadout("rifle")
 	await _frames(3)
 	w = _player.current_weapon
-	_check((w.get_node(^"ArmR") as MeshInstance3D).mesh == WeaponModel.get_arm_mesh("rifle", false, winter),
-		"first-person arms wear the outfit's sleeves and gloves")
+	if SettingsManager.graphics.realistic_characters:
+		# Realistic soldiers: the rifleman's arms replace the code-built ones,
+		# and the IK puts both wrists where the gun's parts want them.
+		var fp := _player.camera.get_node_or_null(^"FPArms") as FPArms
+		await _frames(10)
+		_check(fp != null and fp.visible and fp.weapon == w and (w.get_node(^"ArmR") as MeshInstance3D).mesh == null,
+			"realistic first-person arms replace the code-built ones")
+		var real_pistol := WeaponModel.real_parts("pistol")
+		_check(real_pistol.has("Gun") and real_pistol.has("Magazine")
+			and WeaponModel.get_mesh("pistol", false) == real_pistol.Gun and WeaponModel.hands("pistol").has("muzzle"),
+			"the pistol is a real model (Poly Haven), with its own grip, muzzle and magazine")
+		# Every gun but the sniper aims through a red dot: the M4's own optic,
+		# a red-dot sight mounted on the others (in the gun's mesh), the eye
+		# at the centre of its window and the dot drawn by the crosshair.
+		for id: String in ["rifle", "smg", "shotgun", "lmg", "pistol"]:
+			var h := WeaponModel.hands(id)
+			var ok: bool = h.get("red_dot", false)
+			if h.has("sight"):
+				var eye := (h.sight as Vector3).y + WeaponModel.RED_DOT_EYE * float(h.get("sight_scale", 1.0))
+				ok = ok and is_equal_approx(-(h.ads as Vector3).y, eye) \
+					and (WeaponModel.real_parts(id).Gun as Mesh).get_surface_count() > (WeaponModel.red_dot_mesh().get_surface_count())
+			_check(ok, "%s aims through a red dot (eye at %.3f)" % [id, -(h.ads as Vector3).y])
+		# The M4's own optic is see-through: nothing on its sight line from the
+		# eye to past the optic (its lens and reticle discs are cut out).
+		var m4 := WeaponModel.real_parts("rifle").Gun as Mesh
+		var eye_y := -(WeaponModel.hands("rifle").ads as Vector3).y
+		var blocked := 0
+		for si in m4.get_surface_count():
+			var arr := m4.surface_get_arrays(si)
+			var mv: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			var mi: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+			for t in range(0, mi.size(), 3):
+				var hit = Geometry3D.ray_intersects_triangle(Vector3(0, eye_y, 0.5), Vector3.FORWARD, mv[mi[t]], mv[mi[t + 1]], mv[mi[t + 2]])
+				if hit != null and (hit as Vector3).z > -0.2:
+					blocked += 1
+		_check(blocked == 0, "the M4's optic is see-through (%d faces on its sight line)" % blocked)
+		# The mounted red dot is a real reflex sight (not a box) with clear glass.
+		var rd := WeaponModel.red_dot_mesh()
+		_check(ResourceLoader.exists(WeaponModel.RED_DOT_MODEL) and rd.get_surface_count() == 2
+			and rd.get_aabb().size.z > 0.09 and (rd.surface_get_material(1) as BaseMaterial3D).albedo_color.a < 0.3,
+			"the red dot is a real sight model with clear glass (%s)" % str(rd.get_aabb().size))
+		for id: String in ["smg", "shotgun", "sniper", "lmg"]:
+			var rp := WeaponModel.real_parts(id)
+			_check(rp.has("Gun") and rp.has("Magazine") and rp.has("GunFull") and WeaponModel.hands(id).has("ads")
+				and WeaponModel.get_mesh(id) == rp.GunFull and (id != "lmg" or WeaponModel.get_cover_mesh("lmg") == null),
+				"real %s model: gun, magazine (or shell), third-person mesh and sights" % id)
+		# The knife: a real model, held in the fist with the blade forward.
+		var kref := RifleGrip.hold(_player.camera.get_node(^"FPArms").skeleton, FPArms.SCENE,
+			load(SoldierRig.ANIMS) as AnimationLibrary, "knife")
+		var blade := ((kref.rhand_from_gun as Transform3D).affine_inverse().basis * Vector3.FORWARD).normalized()
+		_check(WeaponModel.real_parts("knife").has("Gun") and kref.has("rhand_from_gun"),
+			"the knife is a real model held in the fist (blade dir in hand %s)" % blade.snapped(Vector3.ONE * 0.01))
+		for k: int in [Throwables.Kind.HE, Throwables.Kind.FLASH, Throwables.Kind.SMOKE, Throwables.Kind.MOLOTOV]:
+			var gm := GrenadeProjectile.build_model(k)
+			_check(gm.get_child(0) is MeshInstance3D and (gm.get_child(0) as MeshInstance3D).mesh is ArrayMesh
+				and ((gm.get_child(0) as MeshInstance3D).mesh as ArrayMesh).get_surface_count() >= 1,
+				"real %s model" % Throwables.NAMES[k])
+			gm.free()
+		var real_rifle := WeaponModel.real_parts("rifle")
+		_check(real_rifle.has("Gun") and real_rifle.has("Magazine") and real_rifle.has("GunFull")
+			and w.ads_position == WeaponModel.hands("rifle").ads and w.muzzle.position == WeaponModel.hands("rifle").muzzle,
+			"the rifle is a real model (M4, Sketchfab): own magazine, red-dot ADS height and muzzle")
+		_check(fp != null and fp.wrist_miss("Right") < 0.02 and fp.wrist_miss("Left") < 0.03,
+			"first-person IK: both wrists on the gun (%.3f, %.3f m)" % [fp.wrist_miss("Right") if fp else -1.0, fp.wrist_miss("Left") if fp else -1.0])
+	else:
+		_check((w.get_node(^"ArmR") as MeshInstance3D).mesh == WeaponModel.get_arm_mesh("rifle", false, winter),
+			"first-person arms wear the outfit's sleeves and gloves")
 	NetworkManager.roster[1].look = saved
 	_player.apply_loadout("rifle")
 	await _frames(40)
@@ -936,7 +1015,11 @@ func _test_grenades() -> void:
 	_check(is_instance_valid(nade) and nade.global_position.distance_to(thrown_from) > 5.0, "grenade still flying before the fuse")
 	await _frames(40)
 	_check(not is_instance_valid(nade) or nade.is_queued_for_deletion(), "grenade explodes after its fuse")
-	_check(_level.find_child("Explosion", true, false) != null, "explosion effect spawned")
+	var boom := _level.find_child("Explosion", true, false)
+	_check(boom != null, "explosion effect spawned")
+	_check(boom != null and boom.find_children("*", "CPUParticles3D", true, false).size() >= 6
+		and FxKit.smoke_texture().get_width() == 128,
+		"explosion: core flash, fireball, sparks, smoke, dust and debris (noise-textured)")
 	_press_action(&"throw_grenade")
 	await _frames(2)
 	_check(_level.find_child("Grenade_*", true, false) == null, "no second throw with none left")
@@ -1130,6 +1213,18 @@ func _test_flash_and_smoke() -> void:
 		_check(SmokeCloud.blocks_line(get_tree(), c + Vector3(-8, 0, 0), c + Vector3(8, 0, 0))
 			and not SmokeCloud.blocks_line(get_tree(), c + Vector3(-8, 0, 8), c + Vector3(8, 0, 8)),
 			"smoke blocks lines through it, not beside it")
+		# Real-looking smoke: atlas puffs in a rolling ground layer and a body,
+		# dense enough to stay opaque, soft where they meet the floor.
+		var layers := cloud.find_children("*", "CPUParticles3D", true, false)
+		var dense := 0
+		var real_look := true
+		for n: String in ["Ground", "Body"]:
+			var e := cloud.find_child(n, true, false) as CPUParticles3D
+			var m := (e.mesh as QuadMesh).material as BaseMaterial3D if e else null
+			real_look = real_look and m != null and m.particles_anim_h_frames == 2 and e.anim_offset_max == 1.0 				and e.color_initial_ramp != null and (m.proximity_fade_enabled or SettingsManager.graphics.rendering_method != "forward_plus")
+			dense += e.amount if e else 0
+		_check(layers.size() >= 4 and real_look and dense >= 72,
+			"smoke cloud: wispy atlas puffs, ground layer + body (%d puffs), soft edges" % dense)
 		var bottle := FireZone.new()
 		_level.add_child(bottle)
 		bottle.ignite(cloud.global_position + Vector3.UP * 0.5)
@@ -1422,7 +1517,8 @@ func _test_bomb_defusal() -> void:
 	_check(b.round_reason == "Defenders eliminated", "eliminating the defenders wins the round")
 	await _frames(40)
 	var body := defender.get_node(^"ThirdPerson/Model") as PlayerModel
-	_check(defender.visible and body._dead and absf(body.rotation.x) + absf(body.rotation.z) > 0.2,
+	var fell := body.rig.is_dead() if body.rig else absf(body.rotation.x) + absf(body.rotation.z) > 0.2
+	_check(defender.visible and body._dead and fell,
 		"the dead player falls over (death animation) instead of vanishing")
 	_check(not (defender.get_node(^"NameTag") as Label3D).visible, "no name tag over a body")
 	_check(Economy.money_of(1) == money_before + Economy.KILL_REWARD + Economy.WIN_REWARD,
@@ -1740,17 +1836,106 @@ func _test_maps() -> void:
 	body.start_reload(1.0)
 	for i in 20:
 		body.animate(1.0 / 60.0, false)
-	_check(body.is_reloading() and (body.get_node(^"ArmL") as Node3D).rotation.x < -0.1,
-		"third person: the reload swings the left arm down")
+	var swung: bool = body.rig._poser.reload > 0.0 if body.rig else (body.get_node(^"ArmL") as Node3D).rotation.x < -0.1
+	_check(body.is_reloading() and swung, "third person: the reload swings the left arm down")
+
+	# Factory's Blender art (assets/maps/factory) replaces the greybox look;
+	# it is batched like the greybox, the big boxes stay occluders and the
+	# collision stays the greybox's. --no-art draws the greybox.
+	await _load_map("res://scenes/levels/factory.tscn")
+	await _frames(40)
+	_check(_level.art != null and _level.art_replaced > 500,
+		"factory: Blender art replaces %d greybox meshes" % _level.art_replaced)
+	var art_batched := _level.art.find_children("*", "MeshInstance3D", true, false).is_empty()
+	var occluders := _level.find_children("*", "OccluderInstance3D", true, false).size()
+	_check(art_batched and occluders > 20, "factory: art merged by StaticBatcher, %d occluders kept" % occluders)
+	_check(_player.is_on_floor(), "factory: the player stands on the greybox collision under the art")
+	# Real props (blue drums, crates, forklifts, delivery trucks, palms, air-con
+	# units, boxes of goods) and the window texture.
+	var has_mats := ["barrel_03", "Crate", "ForkLift_01", "07___Default", "Palm_Hamza", "exterior_aircon_unit_rusted_01",
+			"cardboard_box_01", "Mat_glass"].all(
+		func(n: String) -> bool: return _level.art_materials.has(n))
+	_check(has_mats, "factory: real drums, crates, forklifts, trucks, palms, air-con units, goods, textured windows (%s)" % str(_level.art_materials.keys().slice(0, 40)))
+	var flags := _level.find_children("Flag*", "", true, false).size() + _level.art.find_children("Flag*", "", true, false).size()
+	_check(flags == 0, "factory: no flag (removed), in the greybox or the art (%d)" % flags)
+	Level.art_disabled = true
+	await _load_map("res://scenes/levels/factory.tscn")
+	_check(_level.art == null and _level.art_replaced == 0, "--no-art: factory draws the greybox")
+	Level.art_disabled = false
+	# Map detail: photo sky, skyline and smoke come and go with
+	# the option, and the map's own sky comes back.
+	_check(SettingsManager.load_preset(GraphicsPreset.Quality.LOW).map_detail
+		and SettingsManager.load_preset(GraphicsPreset.Quality.MEDIUM).map_detail,
+		"Map detail is on for Low and Medium too (it is light)")
+	var saved_detail := SettingsManager.graphics.map_detail
+	SettingsManager.graphics.map_detail = true
+	await _load_map("res://scenes/levels/factory.tscn")
+	var env := _level.world_environment.environment
+	_check(_level.detail != null and env.sky.sky_material is PanoramaSkyMaterial
+		and _level.detail.find_children("*", "CPUParticles3D", true, false).size() == 7,
+		"factory: map detail adds the photo sky, skyline and chimney smoke")
+	var puff := _level.detail.find_children("*", "CPUParticles3D", true, false)[0] as CPUParticles3D
+	var puff_mat := (puff.mesh as QuadMesh).material as StandardMaterial3D
+	_check(puff_mat.albedo_color.is_equal_approx(Color(_level.detail.smoke_color, 1.0))
+		and puff.color_ramp.get_color(1).r >= 1.0,
+		"chimney smoke takes its colour from the material (vertex colours are darker on OpenGL)")
+	_check(_level.detail.find_children("*", "CollisionObject3D", true, false).is_empty(),
+		"factory: map detail has no collision (looks only)")
+	var shared := 0
+	for mi: MeshInstance3D in _level.detail.find_children("*", "MeshInstance3D", true, false):
+		if _level.art_materials.values().has(mi.get_active_material(0)):
+			shared += 1
+	_check(_level.detail.batch_stats.get("batches", 0) > 0 and shared > 0,
+		"factory: detail props wear the art's materials and are batched (%d batches)" % _level.detail.batch_stats.get("batches", 0))
+	SettingsManager.graphics.map_detail = false
+	_level._apply_graphics(SettingsManager.graphics)
+	_check(_level.detail == null and env.sky.sky_material is ProceduralSkyMaterial,
+		"turning Map detail off removes it and restores the map's sky")
+	SettingsManager.graphics.map_detail = saved_detail
+	# Back to the art for the factory routes below (they keep a loaded map).
+	await _load_map("res://scenes/levels/factory.tscn")
+	await _frames(40)
+	_open_all_doors()
+
+	# Explosive barrels: shooting one blows it up (fireball, blast damage to
+	# a player nearby, no collision left); it comes back on reset.
+	var barrels := get_tree().get_nodes_in_group(ExplosiveBarrel.GROUP)
+	var barrel: ExplosiveBarrel = null
+	for b: ExplosiveBarrel in barrels:
+		if b.global_position.distance_to(Vector3(-19.5, 0, -3.2)) < 0.5:
+			barrel = b
+	_check(barrels.size() >= 6 and barrel != null and barrel.find_children("*", "MeshInstance3D", true, false).size() > 0,
+		"factory: %d explosive barrels with the real drum model" % barrels.size())
+	if barrel:
+		_reset_player(Vector3(-17.0, 0.1, -1.5), 0.0)
+		_player.health.revive()
+		await _frames(5)
+		barrel.server_hit(barrel.get_node(^"Body"), barrel.global_position + Vector3.UP * 0.5, 25.0, null)
+		var survived := not barrel.exploded
+		barrel.server_hit(barrel.get_node(^"Body"), barrel.global_position + Vector3.UP * 0.5, 25.0, null)
+		await _frames(3)
+		var shape := barrel.get_node(^"Body").get_child(0) as CollisionShape3D
+		_check(survived and barrel.exploded and shape.disabled and _player.health.current < _player.health.max_health
+			and barrel.get_parent().find_child("Explosion", true, false) != null,
+			"factory: shooting a red barrel twice blows it up (player at 2.9 m: %.0f hp)" % _player.health.current)
+		barrel.server_reset()
+		await _frames(2)
+		_check(not barrel.exploded and not shape.disabled and barrel.get_node(^"Body").visible, "factory: the barrel comes back")
+		_player.health.revive()
 
 	# The other new maps: the player lands; a few routes are open.
 	for route: Array in [
-			["factory", Vector3(4.8, 0.1, -19), 0.0, func(p: Vector3) -> bool: return p.z < -29.5, "through the Lanka Steel doors to A"],
-			["factory", Vector3(-4.8, 0.1, -23.15), -PI / 2, func(p: Vector3) -> bool: return p.y > 4.3, "stairs to Lanka Steel's upper floor"],
-			["factory", Vector3(-31, 0.1, 10), -PI / 2, func(p: Vector3) -> bool: return p.x > -7.0, "through the tunnels"],
-			["factory", Vector3(24, 0.1, -19), 0.0, func(p: Vector3) -> bool: return p.y > 3.9, "ramp up to the roof"],
-			["factory", Vector3(16.8, 0.1, 4), 0.0, func(p: Vector3) -> bool: return p.y > 3.9, "ramp up to the catwalk"],
-			["factory", Vector3(5, 0.1, 6), PI, func(p: Vector3) -> bool: return p.z > 20.0, "Lower Mid into B"],
+			# Factory: both ways onto A and B, Mid Doors, the dock and the mezzanine, the CT routes.
+			["factory", Vector3(-39, 0.1, 10), 0.0, func(p: Vector3) -> bool: return p.z < -11.5, "A Long through the Long Doors into A"],
+			["factory", Vector3(-5, 0.1, -1.5), PI / 2, func(p: Vector3) -> bool: return p.x < -23.0, "Mid along Short into Lanka Steel"],
+			["factory", Vector3(-26, 0.1, 1), 0.0, func(p: Vector3) -> bool: return p.z < -13.0, "through the Lanka Steel hall into A"],
+			["factory", Vector3(-47.5, 0.1, -10.5), 0.0, func(p: Vector3) -> bool: return p.y > 1.1, "up the ramp onto the A dock"],
+			["factory", Vector3(0, 0.1, -30), PI, func(p: Vector3) -> bool: return p.z > -10.0, "CT Mid through the Mid Doors"],
+			["factory", Vector3(25, 0.1, 22), 0.0, func(p: Vector3) -> bool: return p.z < 2.0, "through the Tunnel into the Press Hall (B)"],
+			["factory", Vector3(11.5, 0.1, -7), -PI / 2, func(p: Vector3) -> bool: return p.x > 22.0, "through the Workshop into B"],
+			["factory", Vector3(47, 0.1, 1), 0.0, func(p: Vector3) -> bool: return p.y > 3.8, "stairs up to the B mezzanine"],
+			["factory", Vector3(29, 0.1, -44), PI, func(p: Vector3) -> bool: return p.z > -30.0, "CT through B Back into B"],
+			["factory", Vector3(-14, 0.1, -37), PI / 2, func(p: Vector3) -> bool: return p.x < -24.0, "CT A into the silo yard"],
 			["office", Vector3(0, 0.1, 40), 0.0, func(p: Vector3) -> bool: return p.z < 24.0, "front doors into the lobby"],
 			["office", Vector3(20, 0.1, 4), 0.0, func(p: Vector3) -> bool: return p.y > 3.5, "stairs up to the mezzanine"],
 			# Subway: A Long into A, through a train from Mid, out of a track bed, CT and T routes.
@@ -2307,21 +2492,46 @@ func _test_characters() -> void:
 	_check(camo, "looks: woodland pants carry the camouflage pattern")
 	# Walk cycle: positions change on 60 Hz ticks but frames draw at 144 FPS
 	# (remote players) — the legs must still swing and the knees bend.
+	var ground := StaticBody3D.new()
+	var ground_shape := CollisionShape3D.new()
+	var ground_box := BoxShape3D.new()
+	ground_box.size = Vector3(20, 1, 20)
+	ground_shape.shape = ground_box
+	ground.add_child(ground_shape)
+	ground.position = Vector3(0, -500.5, 0)
+	add_child(ground)
+	PlayerModel.force_procedural = true # the code-built soldier's walk cycle
 	var walker := PlayerModel.new()
 	add_child(walker)
+	PlayerModel.force_procedural = false
+	walker.global_position = Vector3(0, -500, 4)
+	await get_tree().physics_frame
 	var thighs := [walker.get_node("LegL"), walker.get_node("LegR")]
 	var swing := 0.0
 	var bend := 0.0
-	for f in 288:
+	var spread := 0.0
+	for f in 576:
 		if f % 12 in [0, 2, 5, 7, 10]:
-			walker.position.z -= 5.0 / 60.0
+			if f < 288:
+				walker.position.z -= 5.0 / 60.0 # forwards
+			else:
+				walker.position.x += 4.0 / 60.0 # strafing right
 		walker.animate(1.0 / 144.0, false)
-		if f > 100:
-			for thigh: Node3D in thighs:
+		for thigh: Node3D in thighs:
+			if f > 100 and f < 288:
 				swing = maxf(swing, absf(thigh.rotation.x))
 				bend = minf(bend, (thigh.get_node("Shin") as Node3D).rotation.x)
+			elif f > 400:
+				spread = maxf(spread, absf(thigh.rotation.z))
 	_check(swing > 0.25 and bend < -0.3, "walk cycle: legs swing and knees bend at 144 FPS (swing %.2f, knee %.2f)" % [swing, bend])
+	_check(spread > 0.15, "walk cycle: strafing steps the legs out to the side (%.2f)" % spread)
+	walker.position.y += 1.5 # a jump
+	for f in 30:
+		walker.animate(1.0 / 60.0, false)
+	_check((thighs[0] as Node3D).rotation.x > 0.35 and (thighs[0].get_node("Shin") as Node3D).rotation.x < -0.6,
+		"walk cycle: knees tuck up in the air")
 	walker.queue_free()
+	ground.queue_free()
 	var r1 := CharacterLook.random(42)
 	_check(r1 == CharacterLook.random(42) and CharacterLook.random(42, 1).body == 1, "looks: random looks repeat per seed")
 
@@ -2387,6 +2597,107 @@ func _test_characters() -> void:
 	screen.queue_free()
 	SettingsManager.character = saved
 	SettingsManager.save()
+
+
+## The realistic soldier (SoldierRig): model, retargeted Mixamo clips, the gun
+## in both hands, locomotion / crouch / air, reload, death and respawn.
+func _test_realistic_soldier() -> void:
+	var saved: bool = SettingsManager.graphics.realistic_characters
+	SettingsManager.graphics.realistic_characters = true
+	# Its own floor (the walk / air logic rays down for the ground), off the map.
+	var floor_body := StaticBody3D.new()
+	var floor_shape := CollisionShape3D.new()
+	floor_shape.shape = BoxShape3D.new()
+	(floor_shape.shape as BoxShape3D).size = Vector3(20, 1, 20)
+	floor_body.add_child(floor_shape)
+	_level.add_child(floor_body)
+	floor_body.position = Vector3(30, -300.5, 25)
+	await get_tree().physics_frame
+	var holder := Node3D.new()
+	_level.add_child(holder)
+	holder.position = Vector3(30, -300.0, 30)
+	var m := PlayerModel.new()
+	holder.add_child(m)
+	m.set_weapon("rifle")
+	m.set_team_color(Color.RED)
+	await _frames(3)
+	var rig := m.rig
+	_check(rig != null and rig.skeleton != null and rig.skeleton.get_bone_count() > 50,
+		"realistic soldier: skinned model on a Mixamo skeleton")
+	var ap := rig.find_child("AnimationPlayer", true, false) as AnimationPlayer
+	_check(ap != null and ap.get_animation_list().size() >= 48 and ap.has_animation(&"run_forward")
+		and ap.has_animation(&"death_from_the_front"), "realistic soldier: the 48 retargeted rifle clips")
+	var s := rig.skeleton
+	var bone := func(n: String) -> Vector3: return s.global_transform * s.get_bone_global_pose(s.find_bone("mixamorig_" + n)).origin
+	var palm := func(side: String) -> Vector3: return (bone.call(side + "Hand") as Vector3).lerp(bone.call(side + "HandMiddle1"), 0.55)
+	var hands: Dictionary = WeaponModel.hands("rifle")
+	for i in 20:
+		m.animate(1.0 / 60.0, false)
+		await get_tree().process_frame
+	var grip_err := (rig.gun.global_transform * (hands.grip as Vector3)).distance_to(palm.call("Right"))
+	var fore_err := (rig.gun.global_transform * (hands.left as Vector3)).distance_to(palm.call("Left"))
+	_check(grip_err < 0.03 and fore_err < 0.12, "realistic soldier: rifle grip in the right hand, fore-end at the left (%.3f, %.3f m)" % [grip_err, fore_err])
+	var banded := rig.find_children("*", "MeshInstance3D", true, false).any(func(mi: MeshInstance3D) -> bool:
+		for i in mi.get_surface_override_material_count():
+			var o := mi.get_surface_override_material(i) as StandardMaterial3D
+			if o and o.resource_name == "Team_band" and o.albedo_color == Color.RED:
+				return true
+		return false)
+	_check(banded, "realistic soldier: team-coloured armbands (own copy of the band material)")
+	# The head stays on top, facing forward (a broken end bone once turned it round).
+	var head: Vector3 = bone.call("Head")
+	var neck: Vector3 = bone.call("Neck")
+	var face_fwd := (s.global_transform.basis * s.get_bone_global_pose(s.find_bone("mixamorig_Head")).basis.z).normalized()
+	var body_fwd := (s.global_transform.basis * s.get_bone_global_pose(s.find_bone("mixamorig_Spine2")).basis.z).normalized()
+	_check(head.y > neck.y + 0.05 and face_fwd.dot(body_fwd) > 0.5,
+		"realistic soldier: the head is on top and faces the way the chest does (%.2f)" % face_fwd.dot(body_fwd))
+	var hips_stand: float = (bone.call("Hips") as Vector3).y
+	# Run forward (-Z) at walk speed: the run clips, a little faster than they were made.
+	var tree := rig.find_child("AnimationTree", true, false) as AnimationTree
+	var feet: Array[float] = []
+	for i in 40:
+		holder.position.z -= 5.0 / 60.0
+		m.animate(1.0 / 60.0, false)
+		await get_tree().process_frame
+		feet.append(((bone.call("LeftFoot") as Vector3) - holder.global_position).z)
+	var bp: Vector2 = tree.get(&"parameters/stand/blend_position")
+	_check(bp.y > 3.5 and absf(bp.x) < 0.5 and feet.max() - feet.min() > 0.3,
+		"realistic soldier: running forward blends the run clips, the feet step (blend %s, foot travel %.2f m)" % [bp, feet.max() - feet.min()])
+	for i in 50:
+		m.animate(1.0 / 60.0, true)
+		await get_tree().process_frame
+	var hips_crouch: float = (bone.call("Hips") as Vector3).y
+	_check(hips_crouch < hips_stand - 0.15, "realistic soldier: crouching lowers the hips (%.2f -> %.2f)" % [hips_stand, hips_crouch])
+	for i in 30:
+		m.animate(1.0 / 60.0, false)
+		await get_tree().process_frame
+	var hand_before: float = rig.left_palm().y
+	m.start_reload(2.0)
+	var lowest := hand_before
+	for i in 50:
+		m.animate(1.0 / 60.0, false)
+		await get_tree().process_frame
+		lowest = minf(lowest, rig.left_palm().y)
+	_check(lowest < hand_before - 0.1, "realistic soldier: the reload drops the left hand to the magazine (%.2f m)" % (hand_before - lowest))
+	m.stop_reload()
+	m.play_death(0, false)
+	await get_tree().create_timer(3.6).timeout
+	_check(rig.is_dead() and not tree.active and (bone.call("Hips") as Vector3).y < holder.global_position.y + 0.45 and not rig.gun.visible,
+		"realistic soldier: a death clip lays the body down and the gun drops")
+	m.reset_pose()
+	for i in 20:
+		m.animate(1.0 / 60.0, false)
+		await get_tree().process_frame
+	_check(tree.active and (bone.call("Hips") as Vector3).y > holder.global_position.y + 0.8 and rig.gun.visible,
+		"realistic soldier: respawn stands him back up with the gun")
+	holder.queue_free()
+	floor_body.queue_free()
+	SettingsManager.graphics.realistic_characters = false
+	var plain := PlayerModel.new()
+	add_child(plain)
+	_check(plain.rig == null, "Realistic soldiers off: the code-built soldier")
+	plain.queue_free()
+	SettingsManager.graphics.realistic_characters = saved
 
 
 func _release_all() -> void:

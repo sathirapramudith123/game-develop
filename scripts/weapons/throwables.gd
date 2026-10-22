@@ -75,6 +75,11 @@ var _live: Dictionary = {}
 var _hand_model: Node3D
 
 
+## The grenade in hand (first person), or null.
+func hand_model() -> Node3D:
+	return _hand_model if is_instance_valid(_hand_model) else null
+
+
 func _ready() -> void:
 	_player = get_parent() as PlayerController
 	# Same rule on every peer: Bomb Defusal players buy their grenades.
@@ -225,7 +230,9 @@ func _hold(kind: int) -> void:
 	_hand_model.name = "GrenadeInHand"
 	_hand_model.position = Vector3(0.2, -0.24, -0.42)
 	_hand_model.rotation = Vector3(0.3, 0.4, 0.0)
-	_hand_model.scale = Vector3.ONE * 1.4
+	# (The code-built grenades are small; the real models are real size.)
+	var real_scale := 0.75 if kind == Kind.MOLOTOV else 1.0
+	_hand_model.scale = Vector3.ONE * (real_scale if SettingsManager.graphics.realistic_characters else 1.4)
 	_player.camera.add_child(_hand_model)
 	if not switching:
 		_player.play_equip_sound()
@@ -402,14 +409,10 @@ func server_detonate(id: int, pos: Vector3) -> void:
 		_blast_breakables(pos, 3.0, 0.0) # the bang shatters nearby windows
 
 
-## Server: doors splinter and windows shatter round an explosion.
+## Server: doors splinter, windows shatter and explosive barrels go off
+## round an explosion.
 func _blast_breakables(pos: Vector3, radius: float, damage: float) -> void:
-	for pane in get_tree().get_nodes_in_group(GlassPane.GROUP):
-		(pane as GlassPane).server_blast(pos, radius, damage)
-	if damage > 0.0:
-		for door in get_tree().get_nodes_in_group(Door.GROUP):
-			if (door as Node3D).global_position.distance_to(pos) < radius + 2.0:
-				(door as Door).server_blast(pos, radius * 0.6, damage)
+	ExplosiveBarrel.blast_breakables(get_tree(), pos, radius, damage, _player)
 
 
 @rpc("any_peer", "call_remote", "reliable")

@@ -38,6 +38,14 @@ enum Quality { LOW, MEDIUM, HIGH, ULTRA, CUSTOM }
 @export_range(0.0, 1.0, 0.05) var particle_amount: float = 1.0
 ## Procedural surface detail (noise, wood grain, stone tiles) in the level shader.
 @export var surface_detail: bool = true
+## A map's extra detail layer (sky, skyline, props, smoke), on maps that
+## have one: assets/maps/<map>/<map>_detail.tscn. On for every preset
+## (it is light); switch it off on the weakest PCs. Looks only — it never
+## blocks a line of sight, so players with it off see the same fight.
+@export var map_detail: bool = true
+## Realistic third-person soldiers (skinned, Mixamo-animated — SoldierRig)
+## instead of the code-built ones. Applies to soldiers spawned afterwards.
+@export var realistic_characters: bool = true
 
 @export_group("Shadows")
 @export var shadows_enabled: bool = true

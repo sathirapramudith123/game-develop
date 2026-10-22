@@ -6,6 +6,127 @@
 screen, exported files (StrikeOps.exe …), installer and server. Your
 settings folder is unchanged, so nothing is lost.
 
+**Factory in real textures:** the Factory map now has real 3D art built
+in Blender — brick, concrete, corrugated iron, rusty and painted steel,
+weathered wood and plaster (free Poly Haven textures) instead of the
+flat greybox colours. The layout, collision, doors and glass are
+unchanged. It stays light for low-end PCs (1k textures, VRAM-compressed,
+merged by the static batcher). Benchmark `--no-art` compares it with the
+greybox.
+
+**New bottom HUD:** tactical corners instead of big panels — a slanted,
+see-through strip bottom-left with your portrait, name, health and
+armour, and one bottom-right with the gun, its name and big ammo
+numbers, each with a thin amber line. The weapon slots (1–4) pop up as
+small tabs above the ammo when you switch, then fade away.
+
+**Explosive barrels and a cleaner Factory:** the red oil drums on
+Factory now blow up when you shoot them (two or three hits) or when an
+HE grenade goes off next to them — a fireball, blast damage to anyone
+close (the kill goes to whoever shot it), shattered windows and other
+barrels going off in a chain. They come back every round. Factory also
+loses the painted A / B arrows and the LANKA STEEL sign; the blocky
+trucks, palms, wall AC box and plain goods boxes are now real models (a
+delivery truck, coconut palms, rusty air-con units, stacked cardboard
+boxes); and the gaps and odd beige panel above the Press Hall entrances
+are closed with hall walls.
+
+**Factory, redesigned:** a new CS-style layout for the Lanka Steel
+works. T start in the truck yard, CT behind the gate. Mid is a long yard
+closed off by the half-open Mid Doors. A is the open silo yard under the
+gantry crane, with a loading dock — reach it along A Long through the
+Long Doors, or by Short through the Lanka Steel hall. B is indoors in
+the Press Hall, among two big presses and a conveyor line, under a
+mezzanine — reach it through the Tunnel or the Workshop. Real brick,
+concrete and steel textures throughout, multi-pane factory windows, real
+crates, oil drums, shipping containers and forklifts, a dark plinth and a
+metal cap on the walls, gutters, downpipes and pipes; the old floating blue panel and blue-rectangle puddle in the
+tunnel are gone.
+
+**Real red-dot sight and real smoke:** the red dot on the SMG, shotgun,
+LMG and pistol is now a real reflex-sight model instead of a black box,
+and you look just over its emitter through clear glass. The M4's own
+optic was still dark inside (lens pieces left in the tube): you now see
+through it, and it sits a little closer to your eye. Smoke grenades
+now pour out a thick, wispy grey cloud over about three seconds — a
+heavy layer rolling along the ground and a billowing body above it, in
+mixed shades of grey, with torn wisps drifting off the edges — that
+fades softly into the floor and walls instead of looking like cotton
+balls. It still blocks sight completely.
+
+**Real-looking grenade effects:** the HE goes off with a white-hot flash,
+an orange fireball, flying sparks and debris, dust swept along the floor,
+black smoke that hangs for a few seconds and a scorch mark; the
+flashbang bursts white with sparks; smoke grenades hiss out a jet and
+billow into a lit, rolling cloud; Molotovs burst and burn with flame
+tongues, embers, black smoke and a scorched floor. All particles, no big
+textures, and they follow the Particles setting. The grenades themselves
+are real models — M67 frag, M84 flashbang, M18 smoke, a bottle with a
+burning rag — held in your fist.
+
+**A real knife:** the K-1 is now a dark combat knife (Sketchfab,
+Relowsky) held in the fist with the blade forward; the left arm drops
+out of view instead of hanging in the air.
+
+**Red-dot sights:** every gun except the sniper now aims through a red
+dot — the M4's optic is see-through, and the SMG, shotgun, LMG and pistol
+have a compact red-dot sight on top. When you aim, a glowing red dot
+sits in the clear window.
+
+**Aiming down the sights fixed:** every gun now lines your eye up with
+its own sights — the SMG and pistol were too low (you saw the back of
+the gun), the shotgun's receiver no longer fills the view, and the LMG's
+ring is centred.
+
+**A real soldier, holding the gun properly:** the third-person soldier
+is now an artist-made German KSK operator (Sketchfab, 42manako) — camo,
+plate carrier, backpack, helmet with headset — and your first-person
+arms are his sleeves and gloves. Guns now sit in the right hand the way
+the aiming animation holds them, with the left hand reaching for the
+handguard, instead of floating between the hands.
+
+**Real guns:** every gun is now a detailed, textured model in first and
+third person — a P-9 pistol (Poly Haven), a tan M4 with a red dot
+(AR-7), an HK MP5 (V-10 SMG), a Remington 870 with real shells
+(M-12), an SV-98M (LR-50 sniper) and an M249 with its green box (K-100
+LMG). You aim down their real sights, and the magazine comes out on
+reload. Artists are credited in docs/CREDITS.md.
+
+**Real hands in first person:** your own arms are now the soldier's
+multicam sleeves and tan gloves, holding every gun with both hands —
+the left hand on the fore-end (or round the pistol grip), dropping to
+the magazine when you reload.
+
+**Realistic soldiers:** other players and bots are now real 3D soldiers —
+a multicam uniform, plate carrier with pouches and radio, helmet with
+night vision, sunglasses, shemagh, knee pads — with proper animations
+from Mixamo's Pro Rifle Pack: walking, running and sprinting in every
+direction, crouch-walking, jumping, six different deaths, and the rifle
+held in both hands (any gun). Reloading drops the left hand to the
+magazine. Your team colour is on the armbands. *Settings → Graphics →
+Realistic soldiers* switches back to the old soldiers on very weak PCs.
+
+**Factory without the flag:** the Sri Lankan flag by CT spawn is gone.
+
+**Factory area detail:** pipes on brackets along the warehouse, silo
+yard and tunnel walls, gutters and downpipes on the buildings, roof
+trusses and pallet-rack frames in the warehouse, lamp posts in the rail
+yard, a guard tower behind T spawn and a water tower behind CT; the
+tanker wagon and box cars get ladders, walkways and door frames, Lanka
+Steel a steel frame (columns, floor bands), and the cranes a real hook
+and leg bracing. Chimney smoke is grey on OpenGL too (it was black). All
+above head height, flat on walls or outside the walls — nothing new to
+hide behind. Costs about 4–15% FPS on Low (switch *Map detail* off on
+the weakest PCs).
+
+**Factory — the concept-art look begins:** a real photo
+sky with clouds, green mountains on the horizon, an industrial skyline
+with cranes, tanks and red-and-white chimneys around the factory, smoke
+drifting from the chimneys and warmer sunlight — on every preset, Low
+included. It's a new graphics option, *Map detail*: switch it off on
+the weakest PCs; it's looks only, so nothing in it can hide a player.
+Also: yellow railings and proper roofs.
+
 **New lobby:** a top bar with tabs (Lobby, Loadout, Character, Profile,
 Settings), your level and XP; your soldier on a lit 3D stage; Quick Play,
 Custom Match, Training and Bot Match on the left; map cards with previews
@@ -25,6 +146,8 @@ name tag; N on the radar.
 **Walking players:** other players and bots now really walk — the legs
 bend at the knee and step in time with how fast they move (before, the
 legs hardly moved at high frame rates and the soldier slid along).
+They step sideways when strafing, tuck their knees up when they jump
+and dip on landing, and shift their weight from foot to foot.
 Crouching drops them onto bent knees.
 
 **Custom match rooms:** create a room, friends join with the INVITE

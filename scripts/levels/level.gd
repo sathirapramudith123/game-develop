@@ -25,6 +25,12 @@ const DEFAULT_PLAYER_SCENE := "res://scenes/player/player.tscn"
 @export var static_batching: bool = true
 ## Benchmark A/B switch (`--no-batching`).
 static var batching_disabled: bool = false
+## Real art for a map, built in Blender over its blockout (README → Real 3D
+## art): res://assets/maps/<map>/<map>.glb. It replaces the greybox meshes
+## that use the same materials (Mat_brick …); collision stays the greybox's.
+const ART_DIR := "res://assets/maps"
+## Draw the greybox even when the map has art (`--no-art`, blockout export).
+static var art_disabled: bool = false
 ## Set before adding to the tree to load the map for a menu preview only:
 ## no players, network, HUD or menus (see MapPreview).
 var preview_only: bool = false
@@ -40,17 +46,27 @@ var _detail_batches: Array[MeshInstance3D] = []
 var dynamic_resolution: DynamicResolution
 ## What StaticBatcher did (shown by the benchmark / tests).
 var batch_stats: Dictionary = {}
+## The map's art scene under Geometry (null when the map has none).
+var art: Node3D
+## How many greybox meshes the art replaced.
+var art_replaced: int = 0
+## The art's materials by name (Mat_metal …), shared with the detail layer.
+var art_materials: Dictionary = {}
+## The map's High/Ultra detail layer while GraphicsPreset.map_detail is on.
+var detail: MapDetail
 
 @onready var hud: Hud = $HUD
 @onready var pause_menu: PauseMenu = $PauseMenu
 
 
 func _ready() -> void:
+	_load_art(get_node_or_null("Geometry") as Node3D)
 	if preview_only:
 		hud.queue_free()
 		pause_menu.queue_free()
 		if world_environment:
 			SettingsManager.apply_to_environment(world_environment.environment)
+		_update_detail()
 		return
 	players_root = Node3D.new()
 	players_root.name = "Players"
@@ -194,6 +210,60 @@ func _update_spectator() -> void:
 		target.camera.current = true
 
 
+## Swaps the greybox look for the map's art, if it has any: greybox meshes
+## whose material the art also has (by name) are hidden — their big boxes
+## still become occluders — and the art goes under Geometry, so StaticBatcher
+## merges it like the greybox. Doors and glass aren't under Geometry.
+func _load_art(geometry: Node3D) -> void:
+	if art_disabled or geometry == null or NetworkManager.is_dedicated():
+		return
+	var id := scene_file_path.get_file().get_basename()
+	var path := "%s/%s/%s.glb" % [ART_DIR, id, id]
+	if id == "" or not ResourceLoader.exists(path):
+		return
+	art = (load(path) as PackedScene).instantiate() as Node3D
+	art.name = "Art"
+	art_materials.clear()
+	for mi: MeshInstance3D in art.find_children("*", "MeshInstance3D", true, false):
+		for s in mi.mesh.get_surface_count():
+			var m := mi.get_active_material(s)
+			if m:
+				art_materials[m.resource_name] = m
+			# Photo textures seen at a glance angle (floors, long walls)
+			# blur without it; cheap next to the fill cost.
+			if m is BaseMaterial3D:
+				(m as BaseMaterial3D).texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	for mi: MeshInstance3D in geometry.find_children("*", "MeshInstance3D", true, false):
+		var m := mi.get_active_material(0) if mi.mesh else null
+		if m and art_materials.has(m.resource_scene_unique_id):
+			StaticBatcher.add_occluder(geometry, mi)
+			mi.visible = false # (StaticBatcher skips hidden meshes)
+			mi.queue_free()
+			art_replaced += 1
+	geometry.add_child(art)
+
+
+## Adds or removes the map's detail layer (assets/maps/<map>/<map>_detail.tscn)
+## to follow the Map detail graphics option.
+func _update_detail() -> void:
+	var want := SettingsManager.graphics.map_detail and not art_disabled and not NetworkManager.is_dedicated()
+	if want == (detail != null):
+		return
+	if detail:
+		detail.restore()
+		detail.queue_free()
+		detail = null
+		return
+	var id := scene_file_path.get_file().get_basename()
+	var path := "%s/%s/%s_detail.tscn" % [ART_DIR, id, id]
+	if id == "" or not ResourceLoader.exists(path):
+		return
+	detail = (load(path) as PackedScene).instantiate() as MapDetail
+	detail.name = "Detail"
+	add_child(detail)
+	detail.apply(self)
+
+
 ## Bounding box of the map geometry (used to frame previews).
 func world_bounds() -> AABB:
 	var box := AABB()
@@ -214,7 +284,10 @@ func spectating() -> PlayerController:
 
 
 func _apply_graphics(_preset: GraphicsPreset) -> void:
+	_update_detail()
 	StaticBatcher.set_detail_distance(_detail_batches, SettingsManager.graphics.draw_distance_scale)
+	if detail and detail.batch_stats.has("details"):
+		StaticBatcher.set_detail_distance(detail.batch_stats.details, SettingsManager.graphics.draw_distance_scale)
 	var lights := get_node_or_null("Lights")
 	if lights:
 		lights.visible = SettingsManager.graphics.dynamic_lights

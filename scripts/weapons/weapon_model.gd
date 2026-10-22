@@ -43,6 +43,196 @@ const CHARGE := {
 const COVER_HINGE := Vector3(0, 0.053, 0.08)
 
 
+## Real gun models (README → Real guns): assets/weapons/<id>/<id>.glb holds
+## <id>_Gun (without magazine), <id>_Magazine and <id>_GunFull meshes in
+## weapon space (metres, -Z = muzzle, sights at the weapon's ADS height).
+## They replace the code-built meshes while Realistic soldiers is on.
+const REAL_DIR := "res://assets/weapons"
+## Where the hands, the magazine and the muzzle are on a real model, where
+## they differ from HANDS (merged over it by hands()); "ads" replaces the
+## weapon's ads_position (the sight's height on this model).
+const REAL_HANDS := {
+	"rifle": { "grip": Vector3(0, -0.085, 0.1), "left": Vector3(0, -0.02, -0.225), "mag": Vector3(0, -0.19, -0.065),
+		"muzzle": Vector3(0, 0.019, -0.526), "ads": Vector3(0, -0.082, -0.15), "red_dot": true,
+		"lens": Vector3(-0.105, -0.06, 0.013) },
+	"smg": { "grip": Vector3(0, -0.08, 0.08), "left": Vector3(0, -0.005, -0.19), "left_kind": "under", "mag": Vector3(0, -0.19, -0.12),
+		"muzzle": Vector3(0, 0.022, -0.3), "sight": Vector3(0, 0.064, -0.05), "red_dot": true, "ads_z": -0.17 },
+	"shotgun": { "grip": Vector3(0, -0.06, 0.14), "left": Vector3(0, -0.03, -0.26), "muzzle": Vector3(0, 0.035, -0.543),
+		"sight": Vector3(0, 0.049, -0.02), "red_dot": true, "ads_z": -0.2 },
+	"sniper": { "grip": Vector3(0, -0.08, 0.14), "left": Vector3(0, -0.06, -0.2), "mag": Vector3(0, -0.09, -0.04),
+		"muzzle": Vector3(0, 0.0, -0.747), "ads": Vector3(0, -0.058, -0.25) },
+	"lmg": { "grip": Vector3(0, -0.09, 0.12), "left": Vector3(0, -0.07, -0.225), "mag": Vector3(0, -0.2, -0.035),
+		"muzzle": Vector3(0, 0.036, -0.575), "sight": Vector3(0, 0.088, 0.0), "red_dot": true, "ads_z": -0.2 },
+	"pistol": { "grip": Vector3(0, -0.038, 0.078), "left": Vector3(-0.02, -0.068, 0.07), "muzzle": Vector3(0, 0.042, -0.103),
+		"sight": Vector3(0, 0.056, 0.03), "red_dot": true, "sight_scale": 0.75, "ads_z": -0.2 },
+	"knife": { "grip": Vector3(0, -0.02, 0.06) },
+}
+static var _real := {}
+
+
+## The real model's meshes by part ("Gun", "Magazine", "GunFull"), or {}.
+static func real_parts(weapon_id: String) -> Dictionary:
+	if not SettingsManager.graphics.realistic_characters:
+		return {}
+	if not _real.has(weapon_id):
+		var parts := {}
+		var path := "%s/%s/%s.glb" % [REAL_DIR, weapon_id, weapon_id]
+		if ResourceLoader.exists(path):
+			var root := (load(path) as PackedScene).instantiate()
+			for mi: MeshInstance3D in root.find_children("*", "MeshInstance3D", true, false):
+				parts[String(mi.name).trim_prefix(weapon_id + "_")] = mi.mesh
+			root.free()
+			# A red-dot sight on the rail (REAL_HANDS "sight"): added to the
+			# gun's own meshes, so it shows in first and third person.
+			var h: Dictionary = REAL_HANDS.get(weapon_id, {})
+			# The gun's own optic: its lens and reticle discs cut out, so you
+			# see through it (REAL_HANDS "lens" = z from, z to, radius).
+			if h.has("lens") and h.has("ads"):
+				for k: String in ["Gun", "GunFull"]:
+					if parts.has(k):
+						parts[k] = _cut_lens(parts[k], -(h.ads as Vector3).y, h.lens)
+			if h.has("sight"):
+				var at := Transform3D(Basis.from_scale(Vector3.ONE * float(h.get("sight_scale", 1.0))), h.sight)
+				for k: String in ["Gun", "GunFull"]:
+					if parts.has(k):
+						parts[k] = _with_mesh(parts[k], red_dot_mesh(), at)
+		_real[weapon_id] = parts
+	return _real[weapon_id]
+
+
+## Where the hands hold this gun (HANDS, with the real model's own points
+## while it is in use). Unknown guns get the rifle's.
+static func hands(weapon_id: String) -> Dictionary:
+	var h: Dictionary = HANDS.get(weapon_id, HANDS["rifle"])
+	if REAL_HANDS.has(weapon_id) and real_parts(weapon_id).has("Gun"):
+		h = h.merged(REAL_HANDS[weapon_id], true)
+		# A red-dot sight puts the eye at the centre of its window.
+		if h.has("sight"):
+			var eye_y: float = (h.sight as Vector3).y + RED_DOT_EYE * float(h.get("sight_scale", 1.0))
+			h.ads = Vector3(0, -eye_y, float(h.get("ads_z", -0.3)))
+	return h
+
+
+## Height of the red-dot window's centre above its mount (m, at scale 1).
+const RED_DOT_EYE := 0.049
+## A real reflex sight (makivic, Sketchfab; docs/CREDITS.md): mount bottom
+## at the origin, the window (0.031–0.059 m up) facing -Z; the eye sits
+## just above its centre, over the emitter housing.
+const RED_DOT_MODEL := "res://assets/weapons/red_dot/red_dot.glb"
+static var _red_dot: ArrayMesh
+
+
+## The red-dot sight (mount at y = 0, window centred RED_DOT_EYE above,
+## looking down -Z): the real model with a faint clear glass, or — if it is
+## missing — a code-built one (low mount, squared hood, glass, knob).
+static func red_dot_mesh() -> ArrayMesh:
+	if _red_dot:
+		return _red_dot
+	var glass_mat := StandardMaterial3D.new()
+	glass_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	glass_mat.albedo_color = Color(0.45, 0.75, 0.8, 0.12)
+	glass_mat.roughness = 0.05
+	glass_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if ResourceLoader.exists(RED_DOT_MODEL):
+		var scene := (load(RED_DOT_MODEL) as PackedScene).instantiate()
+		var body: Mesh
+		var glass: Mesh
+		for mi: MeshInstance3D in scene.find_children("*", "MeshInstance3D", true, false):
+			if String(mi.name).contains("glass"):
+				glass = mi.mesh
+			else:
+				body = mi.mesh
+		scene.free()
+		if body and glass:
+			_red_dot = _with_mesh(body, glass, Transform3D.IDENTITY)
+			_red_dot.surface_set_material(_red_dot.get_surface_count() - 1, glass_mat)
+			return _red_dot
+	var b := MeshBuilder.new()
+	b.define(&"sight", Color(0.06, 0.065, 0.07), 0.5)
+	var e := RED_DOT_EYE
+	var w := 0.034 # window
+	var t := 0.004 # hood wall
+	var d := 0.03 # hood depth
+	b.box(&"sight", Vector3(0.026, 0.01, 0.05), Vector3(0, 0.005, 0)) # rail clamp
+	b.box(&"sight", Vector3(0.018, e - w * 0.5 - t - 0.008, 0.03), Vector3(0, 0.01 + (e - w * 0.5 - t - 0.008) * 0.5, 0.004)) # riser
+	b.box(&"sight", Vector3(w + 2 * t, t, d), Vector3(0, e + w * 0.5 + t * 0.5, 0)) # hood top
+	b.box(&"sight", Vector3(w + 2 * t, t, d), Vector3(0, e - w * 0.5 - t * 0.5, 0)) # hood bottom
+	for sx: float in [-1.0, 1.0]:
+		b.box(&"sight", Vector3(t, w + 2 * t, d), Vector3(sx * (w * 0.5 + t * 0.5), e, 0)) # sides
+	b.box(&"sight", Vector3(0.008, 0.008, 0.012), Vector3(0.023, e, 0.004)) # brightness knob
+	var frame := b.build()
+	var glass := QuadMesh.new()
+	glass.size = Vector2(w, w)
+	glass.material = glass_mat
+	_red_dot = _with_mesh(frame, glass, Transform3D(Basis.IDENTITY, Vector3(0, e, -d * 0.3)))
+	return _red_dot
+
+
+## `mesh` without the faces across a sight tube looking down -Z at height
+## `eye_y`: those facing along it between lens.x and lens.y (z) that come
+## within lens.z (m) of its axis or cross it.
+static func _cut_lens(mesh: Mesh, eye_y: float, lens: Vector3) -> ArrayMesh:
+	var out := ArrayMesh.new()
+	for si in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(si)
+		for c in [Mesh.ARRAY_CUSTOM0, Mesh.ARRAY_CUSTOM1, Mesh.ARRAY_CUSTOM2, Mesh.ARRAY_CUSTOM3, Mesh.ARRAY_BONES, Mesh.ARRAY_WEIGHTS]:
+			arrays[c] = null
+		var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		if idx.is_empty():
+			idx = PackedInt32Array(range(v.size()))
+		var keep := PackedInt32Array()
+		var from := Vector3(0, eye_y, 1.0)
+		for t in range(0, idx.size(), 3):
+			var a := v[idx[t]]
+			var b := v[idx[t + 1]]
+			var c := v[idx[t + 2]]
+			var cen := (a + b + c) / 3.0
+			var cut := false
+			if cen.z > lens.x and cen.z < lens.y and absf((b - a).cross(c - a).normalized().z) > 0.6:
+				cut = Vector2(cen.x, cen.y - eye_y).length() < lens.z 					or Geometry3D.ray_intersects_triangle(from, Vector3.FORWARD, a, b, c) != null
+			if not cut:
+				keep.append_array([idx[t], idx[t + 1], idx[t + 2]])
+		arrays[Mesh.ARRAY_INDEX] = keep
+		out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		out.surface_set_material(out.get_surface_count() - 1, mesh.surface_get_material(si))
+	return out
+
+
+## `base` with `extra`'s surfaces appended, moved by `at`.
+static func _with_mesh(base: Mesh, extra: Mesh, at: Transform3D) -> ArrayMesh:
+	var out := ArrayMesh.new()
+	for pair: Array in [[base, Transform3D.IDENTITY], [extra, at]]:
+		var m := pair[0] as Mesh
+		var xf := pair[1] as Transform3D
+		for i in m.get_surface_count():
+			var arrays := m.surface_get_arrays(i)
+			# Only the standard channels (custom ones need their own format flags).
+			for c in [Mesh.ARRAY_CUSTOM0, Mesh.ARRAY_CUSTOM1, Mesh.ARRAY_CUSTOM2, Mesh.ARRAY_CUSTOM3, Mesh.ARRAY_BONES, Mesh.ARRAY_WEIGHTS]:
+				arrays[c] = null
+			if xf != Transform3D.IDENTITY:
+				var v: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+				for j in v.size():
+					v[j] = xf * v[j]
+				arrays[Mesh.ARRAY_VERTEX] = v
+				if arrays[Mesh.ARRAY_NORMAL] != null:
+					var n: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+					for j in n.size():
+						n[j] = (xf.basis * n[j]).normalized()
+					arrays[Mesh.ARRAY_NORMAL] = n
+				if arrays[Mesh.ARRAY_TANGENT] != null:
+					var tg: PackedFloat32Array = arrays[Mesh.ARRAY_TANGENT]
+					for j in range(0, tg.size(), 4):
+						var tv := (xf.basis * Vector3(tg[j], tg[j + 1], tg[j + 2])).normalized()
+						tg[j] = tv.x
+						tg[j + 1] = tv.y
+						tg[j + 2] = tv.z
+					arrays[Mesh.ARRAY_TANGENT] = tg
+			out.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+			out.surface_set_material(out.get_surface_count() - 1, m.surface_get_material(i))
+	return out
+
+
 static func has_model(weapon_id: String) -> bool:
 	return weapon_id in ["rifle", "smg", "shotgun", "sniper", "pistol", "knife", "lmg"]
 
@@ -50,6 +240,9 @@ static func has_model(weapon_id: String) -> bool:
 ## The whole gun (third person). `with_magazine = false`: the viewmodel's
 ## gun, whose magazine is a separate node (see get_magazine_mesh).
 static func get_mesh(weapon_id: String, with_magazine: bool = true) -> ArrayMesh:
+	var real := real_parts(weapon_id)
+	if real.has("Gun"):
+		return (real.get("GunFull", real.Gun) if with_magazine else real.Gun) as ArrayMesh
 	var key := weapon_id if with_magazine else weapon_id + ":nomag"
 	if not _cache.has(key):
 		var b := MeshBuilder.new()
@@ -74,6 +267,8 @@ static func get_magazine_mesh(weapon_id: String) -> ArrayMesh:
 	var key := weapon_id + ":mag"
 	if weapon_id == "knife":
 		return null
+	if real_parts(weapon_id).has("Magazine"):
+		return real_parts(weapon_id).Magazine as ArrayMesh
 	if not _cache.has(key) and has_model(weapon_id):
 		var b := MeshBuilder.new()
 		_magazine(b, weapon_id)
@@ -83,8 +278,8 @@ static func get_magazine_mesh(weapon_id: String) -> ArrayMesh:
 
 ## LMG top cover, in hinge space (the viewmodel lifts it to load the belt).
 static func get_cover_mesh(weapon_id: String) -> ArrayMesh:
-	if weapon_id != "lmg":
-		return null
+	if weapon_id != "lmg" or real_parts(weapon_id).has("Gun"):
+		return null # (the real LMG's cover is part of its model)
 	if not _cache.has("lmg:cover"):
 		var b := MeshBuilder.new()
 		_cover(b, Vector3.ZERO)
